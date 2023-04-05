@@ -1,2 +1,5 @@
-# changewindows-tray
-Tray notification app for ChangeWindows.org
+# ChangeWindows.org Notification
+
+Unofficial Tray Notification Application
+
+

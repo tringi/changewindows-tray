@@ -1,0 +1,35 @@
+#include <Windows.h>
+
+1 ICON "ChangeWindows.ico"
+
+1 MENU
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
+{
+    POPUP ""
+    {
+        MENUITEM "TBD: Dialog", 0x10
+        MENUITEM SEPARATOR
+        MENUITEM "Open &www.changewindows.org…", 0x1A
+        MENUITEM "&About…", 0x11
+        MENUITEM SEPARATOR
+        // MENUITEM "&Show saved window position…", 0xF2
+        // MENUITEM "&Hide icon, but keep running", 0xFE
+        // MENUITEM SEPARATOR
+        MENUITEM "Exi&t", 0x1F
+    }
+}
+
+STRINGTABLE
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
+{
+    1   "This program... "
+    /*
+    2   "Position is saved when Notepad is closed with the file open, and used when opening the file directly.\n\n"
+    3   "Command-line parameters:\n"
+    4   " • hide – starts without tray icon or hides existing one\n"
+    5   " • show – restores tray icon of the running program, if any\n"
+    6   " • query ""file.txt"" – display stored position and size for the file\n"
+    7   " • delete ""file.txt"" – deletes stored information for the file\n"
+    8   " • terminate – closes running instance\n"
+    */
+}
