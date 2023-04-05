@@ -1,0 +1,4 @@
+EXPORTS 
+	_snwprintf
+	wcscmp
+	memset

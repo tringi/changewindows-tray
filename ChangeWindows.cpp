@@ -23,8 +23,6 @@ namespace {
     HWND window = NULL;
     UINT WM_Application = WM_NULL;
     UINT WM_TaskbarCreated = WM_NULL;
-    HHOOK hook1 = NULL;
-    HHOOK hook2 = NULL;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -112,9 +110,9 @@ namespace {
 
     LPWSTR * argw = NULL;
 
-    Command ParseCommandLine (LPWSTR lpCmdLine) {
+    Command ParseCommandLine () {
         int argc;
-        argw = CommandLineToArgvW (lpCmdLine, &argc);
+        argw = CommandLineToArgvW (GetCommandLineW (), &argc);
 
         for (auto i = 0; i < argc; ++i) {
             auto cmd = ParseCommand (argw [i]);
@@ -125,9 +123,8 @@ namespace {
     }
 }
 
-int APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCmdShow) {
-
-    auto command = ParseCommandLine (lpCmdLine);
+int WinMainCRTStartup () {
+    auto command = ParseCommandLine ();
     if (FirstInstance ()) {
         switch (command) {
             case HideCommand: // start hidden
@@ -135,9 +132,9 @@ int APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCm
                 nid.dwStateMask = NIS_HIDDEN;
                 break;
             case TerminateCommand:
-                return ERROR_INVALID_PARAMETER;
+                ExitProcess (ERROR_INVALID_PARAMETER);
             case ShowCommand:
-                return ERROR_FILE_NOT_FOUND;
+                ExitProcess (ERROR_FILE_NOT_FOUND);
         }
     } else {
         SetLastError (0);
@@ -152,10 +149,12 @@ int APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCm
                 command = ShowCommand;
         }
         BroadcastSystemMessage (BSF_FORCEIFHUNG | BSF_IGNORECURRENTTASK, &recipients, RegisterWindowMessage (name), command, 0);
-        return GetLastError ();
+        ExitProcess  (GetLastError ());
     }
    
     LocalFree (argw);
+
+    auto hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
 
     if (HRSRC hRsrc = FindResource (hInstance, MAKEINTRESOURCE (1), RT_VERSION)) {
         if (HGLOBAL hGlobal = LoadResource (hInstance, hRsrc)) {
@@ -185,7 +184,10 @@ int APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCm
                     auto p = reinterpret_cast <const DWORD *> (LockResource (hGlobal));
                     auto e = p + (size - sizeof (VS_FIXEDFILEINFO)) / sizeof (DWORD);
 
-                    p = std::find (p, e, 0xFEEF04BDu);
+                    for (; p != e; ++p)
+                        if (*p == 0xFEEF04BDu)
+                            break;
+
                     if (p != e)
                         version = reinterpret_cast <const VS_FIXEDFILEINFO *> (p);
                 }
@@ -193,34 +195,32 @@ int APIENTRY wWinMain (HINSTANCE hInstance, HINSTANCE, LPWSTR lpCmdLine, int nCm
         }
     }
 
-    if (!version || !strings.data) {
-        return GetLastError ();
-    }
+    if (version && strings.data) {
+        if (auto atom = RegisterClass (&wndclass)) {
+            menu = GetSubMenu (LoadMenu (hInstance, MAKEINTRESOURCE (1)), 0);
+            if (menu) {
+                SetMenuDefaultItem (menu, 0x10, FALSE);
 
-    if (auto atom = RegisterClass (&wndclass)) {
-        menu = GetSubMenu (LoadMenu (hInstance, MAKEINTRESOURCE (1)), 0);
-        if (menu) {
-            SetMenuDefaultItem (menu, 0x10, FALSE);
+                WM_Application = RegisterWindowMessage (name);
+                WM_TaskbarCreated = RegisterWindowMessage (L"TaskbarCreated");
 
-            WM_Application = RegisterWindowMessage (name);
-            WM_TaskbarCreated = RegisterWindowMessage (L"TaskbarCreated");
+                window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0, 0, 0, 0, 0, HWND_DESKTOP, NULL, hInstance, NULL);
+                if (window) {
+                    Windows::AllowIsolatedMessage (window, WM_Application, true);
+                    Windows::AllowIsolatedMessage (window, WM_TaskbarCreated, true);
 
-            window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0, 0, 0, 0, 0, HWND_DESKTOP, NULL, hInstance, NULL);
-            if (window) {
-                Windows::AllowIsolatedMessage (window, WM_Application, true);
-                Windows::AllowIsolatedMessage (window, WM_TaskbarCreated, true);
-
-                MSG message;
-                while (GetMessage (&message, NULL, 0, 0) > 0) {
-                    DispatchMessage (&message);
-                }
-                if (message.message == WM_QUIT) {
-                    return (int) message.wParam;
+                    MSG message;
+                    while (GetMessage (&message, NULL, 0, 0) > 0) {
+                        DispatchMessage (&message);
+                    }
+                    if (message.message == WM_QUIT) {
+                        ExitProcess ((int) message.wParam);
+                    }
                 }
             }
         }
     }
-    return GetLastError ();
+    ExitProcess (GetLastError ());
 }
 
 namespace {
@@ -234,6 +234,13 @@ namespace {
             _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s - %s\n%s",
                         strings [L"ProductName"], strings [L"ProductVersion"], strings [L"CompanyName"]);
         }
+
+        if (nid.hIcon) {
+
+            DestroyIcon (nid.hIcon);
+        }
+        nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
+                                       GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
 
         Shell_NotifyIcon (NIM_MODIFY, &nid);
     }
@@ -282,19 +289,17 @@ namespace {
         switch (message) {
             case WM_CREATE:
                 nid.hWnd = hWnd;
-                nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
-                                               GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
-
                 Shell_NotifyIcon (NIM_ADD, &nid);
                 Shell_NotifyIcon (NIM_SETVERSION, &nid);
                     
                 update ();
                 return 0;
             
+            //case WM_GETICON:
+                //return (LRESULT) nid.hIcon;
+
             case WM_DPICHANGED:
-                nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
-                                               GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
-                Shell_NotifyIcon (NIM_MODIFY, &nid);
+                update ();
                 break;
 
             case WM_APP:
