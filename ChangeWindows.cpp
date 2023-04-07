@@ -499,9 +499,9 @@ namespace {
     }
 
     bool check () {
-        if (auto connection = WinHttpConnect (internet, L"localhost", 8080,/* L"changewindows.org", 443, */0)) {
-            if (auto request = WinHttpOpenRequest (connection, NULL, L"/OnVampires/www/predpoklady-a-priprava", NULL,
-                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, /*WINHTTP_FLAG_SECURE*/0)) {
+        if (auto connection = WinHttpConnect (internet, L"changewindows.org", 443, 0)) {
+            if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
+                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
 
                 if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) connection)) {
                     return true;
