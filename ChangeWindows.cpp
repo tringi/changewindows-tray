@@ -29,6 +29,7 @@ namespace {
     HKEY data = NULL;       // last versions
     HKEY settings = NULL;   // app settings
     HINTERNET internet = NULL;
+    HINTERNET connection = NULL;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -236,10 +237,14 @@ namespace {
         _snwprintf (agent, 64, L"%s/%u.%u (https://changewindows.org)",
                     strings [L"InternalName"], HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
         
+        Print (L"User-agent: %s\n", agent);
+
         internet = WinHttpOpen (agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
 
         if (internet) {
             WinHttpSetStatusCallback (internet, InternetHandler, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS, NULL);
+
+            connection = WinHttpConnect (internet, L"changewindows.org", 443, 0);
         }
     }
 }
@@ -304,6 +309,7 @@ int WinMainCRTStartup () {
 
                     if (internet) {
                         WinHttpSetStatusCallback (internet, NULL, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, NULL);
+                        WinHttpCloseHandle (connection);
                         WinHttpCloseHandle (internet);
                     }
 
@@ -499,34 +505,27 @@ namespace {
     }
 
     bool check () {
-        if (auto connection = WinHttpConnect (internet, L"changewindows.org", 443, 0)) {
-            if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
-                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
+        if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
+                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
 
-                if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) connection)) {
-                    return true;
-
-                } else {
-                    WinHttpCloseHandle (request);
-                    WinHttpCloseHandle (connection);
-                }
-            } else {
-                WinHttpCloseHandle (connection);
+            if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) NULL)) {
+                return true;
             }
-            return false;
+            WinHttpCloseHandle (request);
         }
+        return false;
     }
 
     char buffer [8193];
 
-    void WINAPI InternetHandler (HINTERNET request, DWORD_PTR connection, DWORD code, LPVOID data_, DWORD size) {
+    void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
         auto data = static_cast <char *> (data_);
         Print (L"InternetHandler @ %p %08X: %p %p %u\n", &data, code, buffer, data, size);
         switch (code) {
 
             case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
             case WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:
-                // this->report (raddi::log::level::error, 0x26);
+                // report error
                 break;
 
                 // successes return early here
@@ -534,7 +533,7 @@ namespace {
                 if (WinHttpReceiveResponse (request, NULL))
                     return;
 
-                // this->report (raddi::log::level::error, 0x25, "start");
+                // report error
                 break;
 
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
@@ -577,9 +576,7 @@ namespace {
                 }
         }
 
-//cancelled:
         WinHttpCloseHandle (request);
-        WinHttpCloseHandle ((HINTERNET) connection);
         Print (L"InternetHandler closed\n");
     }
 }
