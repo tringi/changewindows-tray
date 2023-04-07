@@ -1,14 +1,17 @@
+#include <winsock2.h>
 #include <Windows.h>
-#include <VersionHelpers.h>
+#include <ws2ipdef.h>
+#include <winhttp.h>
 #include <shellapi.h>
 #include <commdlg.h>
+
+#include <VersionHelpers.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
 
 #include "Windows_Symbol.hpp"
-#include "Windows_AllowIsolatedMessage.hpp"
 
 #pragma warning (disable:6262) // stack usage warning
 #pragma warning (disable:26812) // unscoped enum warning
@@ -23,6 +26,9 @@ namespace {
     HWND window = NULL;
     UINT WM_Application = WM_NULL;
     UINT WM_TaskbarCreated = WM_NULL;
+    HKEY data = NULL;       // last versions
+    HKEY settings = NULL;   // app settings
+    HINTERNET internet = NULL;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -89,41 +95,160 @@ namespace {
         }
     } strings;
 
+
+    void Print (const wchar_t * format, ...) {
+        va_list args;
+        va_start (args, format);
+
+        wchar_t buffer [1024];
+        DWORD length = wvsprintf (buffer, format, args);
+
+        DWORD written;
+        WriteConsole (GetStdHandle (STD_OUTPUT_HANDLE), buffer, length, &written, NULL);
+
+        va_end (args);
+    }// */
+
     bool FirstInstance () {
         return CreateMutex (NULL, FALSE, name)
             && GetLastError () != ERROR_ALREADY_EXISTS;
     }
 
-    Command ParseCommand (const wchar_t * argument) {
-        while (*argument == L'/' || *argument == L'-') {
-            ++argument;
-        }
-        if (std::wcscmp (argument, L"terminate") == 0) return TerminateCommand;
-        if (std::wcscmp (argument, L"hide") == 0) return HideCommand;
-        if (std::wcscmp (argument, L"show") == 0) return ShowCommand;
+    BOOL (WINAPI * pfnChangeWindowMessageFilterEx) (HWND, UINT, DWORD, LPVOID) = NULL;
 
-        // if (std::wcscmp (argument, L"query") == 0) return QueryCommand;
-        // if (std::wcscmp (argument, L"delete") == 0) return DeleteCommand;
+    bool AllowIsolatedMessage (HWND hWnd, UINT message, bool allow) {
+        if (hWnd && pfnChangeWindowMessageFilterEx) // Win7+
+            return pfnChangeWindowMessageFilterEx (hWnd, message, allow ? MSGFLT_ALLOW : MSGFLT_DISALLOW, NULL);
+
+        if (allow || !hWnd)
+            return ChangeWindowMessageFilter (message, allow ? MSGFLT_ADD : MSGFLT_REMOVE);
+
+        return allow;
+    }
+
+    bool ends_with (const wchar_t * cmdline, const wchar_t * value) {
+        auto llen = std::wcslen (cmdline);
+        auto vlen = std::wcslen (value);
+
+        if (vlen < llen) {
+            if (std::wcscmp (cmdline + llen - vlen, value) == 0) {
+                switch (cmdline [llen - vlen - 1]) {
+                    case L' ':
+                        return true;
+                    case L'/':
+                        return cmdline [llen - vlen - 2] == L' ';
+
+                    case L'-':
+                        std::size_t i = 1;
+                        while (cmdline [llen - vlen - i] == L'-') {
+                            ++i;
+                        }
+                        return cmdline [llen - vlen - i] == L' ';
+                }
+            }
+        }
+        return false;
+    }
+        
+    Command ParseCommandLine () {
+        auto cmdline = GetCommandLine ();
+
+        if (ends_with (cmdline, L"terminate")) return TerminateCommand;
+        if (ends_with (cmdline, L"hide")) return HideCommand;
+        if (ends_with (cmdline, L"show")) return ShowCommand;
 
         return NoCommand;
     }
 
-    LPWSTR * argw = NULL;
+    bool InitResources () {
+        auto hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
 
-    Command ParseCommandLine () {
-        int argc;
-        argw = CommandLineToArgvW (GetCommandLineW (), &argc);
+        if (HRSRC hRsrc = FindResource (hInstance, MAKEINTRESOURCE (1), RT_VERSION)) {
+            if (HGLOBAL hGlobal = LoadResource (hInstance, hRsrc)) {
+                auto data = LockResource (hGlobal);
+                auto size = SizeofResource (hInstance, hRsrc);
 
-        for (auto i = 0; i < argc; ++i) {
-            auto cmd = ParseCommand (argw [i]);
-            if (cmd != NoCommand)
-                return cmd;
+                struct VS_VERSIONINFO : public VS_HEADER {
+                    WCHAR szKey [sizeof "VS_VERSION_INFO"]; // 15 characters
+                    WORD  Padding1 [1];
+                    VS_FIXEDFILEINFO Value;
+                };
+
+                if (size >= sizeof (VS_VERSIONINFO)) {
+                    const auto * vi = static_cast <const VS_HEADER *> (data);
+                    const auto * vp = static_cast <const unsigned char *> (data)
+                        + sizeof (VS_VERSIONINFO) + sizeof (VS_HEADER) - sizeof (VS_FIXEDFILEINFO)
+                        + vi->wValueLength;
+
+                    if (!std::wcscmp (reinterpret_cast <const wchar_t *> (vp), L"StringFileInfo")) {
+                        vp += sizeof (L"StringFileInfo");
+
+                        strings.size = reinterpret_cast <const VS_HEADER *> (vp)->wLength / 2 - std::size_t (12);
+                        strings.data = reinterpret_cast <const wchar_t *> (vp) + 12;
+                    }
+
+                    if (vi->wValueLength) {
+                        auto p = reinterpret_cast <const DWORD *> (LockResource (hGlobal));
+                        auto e = p + (size - sizeof (VS_FIXEDFILEINFO)) / sizeof (DWORD);
+
+                        for (; p != e; ++p)
+                            if (*p == 0xFEEF04BDu)
+                                break;
+
+                        if (p != e)
+                            version = reinterpret_cast <const VS_FIXEDFILEINFO *> (p);
+                    }
+                }
+            }
         }
-        return NoCommand;
+        return version && strings.data;
+    }
+
+    bool InitRegistry () {
+        HKEY hKeySoftware = NULL;
+        if (RegCreateKeyEx (HKEY_CURRENT_USER, L"SOFTWARE", 0, NULL, 0,
+                            KEY_CREATE_SUB_KEY, NULL, &hKeySoftware, NULL) == ERROR_SUCCESS) {
+
+            HKEY hKeyTRIMCORE = NULL;
+            if (RegCreateKeyEx (hKeySoftware, strings [L"CompanyName"], 0, NULL, 0, // TRIM CORE SOFTWARE s.r.o.
+                                KEY_ALL_ACCESS, NULL, &hKeyTRIMCORE, NULL) == ERROR_SUCCESS) {
+
+                DWORD disp = 0;
+                if (RegCreateKeyEx (hKeyTRIMCORE, strings [L"InternalName"], 0, NULL, 0,
+                                    KEY_ALL_ACCESS, NULL, &settings, &disp) == ERROR_SUCCESS) {
+                    if (disp == REG_CREATED_NEW_KEY) {
+                        // defaults
+                        // RegSetSettingsValue (L"color", 1); // white
+                    }
+
+                    RegCreateKeyEx (settings, L"data", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &data, NULL);
+                }
+                RegCloseKey (hKeyTRIMCORE);
+            }
+            RegCloseKey (hKeySoftware);
+        }
+        return data && settings;
+    }
+
+    void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data, DWORD size);
+    void InitInternet () {
+        wchar_t agent [64];
+        _snwprintf (agent, 64, L"%s/%u.%u (https://changewindows.org)",
+                    strings [L"InternalName"], HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
+        
+        internet = WinHttpOpen (agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
+
+        if (internet) {
+            WinHttpSetStatusCallback (internet, InternetHandler, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS, NULL);
+        }
     }
 }
 
 int WinMainCRTStartup () {
+    if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
+        AllocConsole ();
+    }
+
     auto command = ParseCommandLine ();
     if (FirstInstance ()) {
         switch (command) {
@@ -149,70 +274,39 @@ int WinMainCRTStartup () {
                 command = ShowCommand;
         }
         BroadcastSystemMessage (BSF_FORCEIFHUNG | BSF_IGNORECURRENTTASK, &recipients, RegisterWindowMessage (name), command, 0);
-        ExitProcess  (GetLastError ());
-    }
-   
-    LocalFree (argw);
-
-    auto hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
-
-    if (HRSRC hRsrc = FindResource (hInstance, MAKEINTRESOURCE (1), RT_VERSION)) {
-        if (HGLOBAL hGlobal = LoadResource (hInstance, hRsrc)) {
-            auto data = LockResource (hGlobal);
-            auto size = SizeofResource (hInstance, hRsrc);
-
-            struct VS_VERSIONINFO : public VS_HEADER {
-                WCHAR szKey [sizeof "VS_VERSION_INFO"]; // 15 characters
-                WORD  Padding1 [1];
-                VS_FIXEDFILEINFO Value;
-            };
-
-            if (size >= sizeof (VS_VERSIONINFO)) {
-                const auto * vi = static_cast <const VS_HEADER *> (data);
-                const auto * vp = static_cast <const unsigned char *> (data)
-                                + sizeof (VS_VERSIONINFO) + sizeof (VS_HEADER) - sizeof (VS_FIXEDFILEINFO)
-                                + vi->wValueLength;
-
-                if (!std::wcscmp (reinterpret_cast <const wchar_t *> (vp), L"StringFileInfo")) {
-                    vp += sizeof (L"StringFileInfo");
-
-                    strings.size = reinterpret_cast <const VS_HEADER *> (vp)->wLength / 2 - std::size_t (12);
-                    strings.data = reinterpret_cast <const wchar_t *> (vp) + 12;
-                }
-
-                if (vi->wValueLength) {
-                    auto p = reinterpret_cast <const DWORD *> (LockResource (hGlobal));
-                    auto e = p + (size - sizeof (VS_FIXEDFILEINFO)) / sizeof (DWORD);
-
-                    for (; p != e; ++p)
-                        if (*p == 0xFEEF04BDu)
-                            break;
-
-                    if (p != e)
-                        version = reinterpret_cast <const VS_FIXEDFILEINFO *> (p);
-                }
-            }
-        }
+        ExitProcess (GetLastError ());
     }
 
-    if (version && strings.data) {
+    if (InitResources () && InitRegistry ()) {
         if (auto atom = RegisterClass (&wndclass)) {
-            menu = GetSubMenu (LoadMenu (hInstance, MAKEINTRESOURCE (1)), 0);
+
+            menu = GetSubMenu (LoadMenu (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1)), 0);
             if (menu) {
                 SetMenuDefaultItem (menu, 0x10, FALSE);
 
                 WM_Application = RegisterWindowMessage (name);
                 WM_TaskbarCreated = RegisterWindowMessage (L"TaskbarCreated");
 
-                window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0, 0, 0, 0, 0, HWND_DESKTOP, NULL, hInstance, NULL);
+                window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0,0,0,0,0, HWND_DESKTOP,
+                                       NULL, reinterpret_cast <HINSTANCE> (&__ImageBase), NULL);
                 if (window) {
-                    Windows::AllowIsolatedMessage (window, WM_Application, true);
-                    Windows::AllowIsolatedMessage (window, WM_TaskbarCreated, true);
+
+                    Windows::Symbol (L"USER32", pfnChangeWindowMessageFilterEx, "ChangeWindowMessageFilterEx");
+                    AllowIsolatedMessage (window, WM_Application, true);
+                    AllowIsolatedMessage (window, WM_TaskbarCreated, true);
+
+                    InitInternet ();
 
                     MSG message;
                     while (GetMessage (&message, NULL, 0, 0) > 0) {
                         DispatchMessage (&message);
                     }
+
+                    if (internet) {
+                        WinHttpSetStatusCallback (internet, NULL, WINHTTP_CALLBACK_FLAG_ALL_NOTIFICATIONS, NULL);
+                        WinHttpCloseHandle (internet);
+                    }
+
                     if (message.message == WM_QUIT) {
                         ExitProcess ((int) message.wParam);
                     }
@@ -224,19 +318,13 @@ int WinMainCRTStartup () {
 }
 
 namespace {
-    DWORD tray = ERROR_IO_PENDING;
-
     void update () {
-        if (tray != ERROR_SUCCESS) {
-            _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s - %s\nERROR %u",
-                        strings [L"ProductName"], strings [L"ProductVersion"], tray);
-        } else {
-            _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s - %s\n%s",
-                        strings [L"ProductName"], strings [L"ProductVersion"], strings [L"CompanyName"]);
-        }
+        _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s - %s\n%s",
+                    strings [L"ProductName"], strings [L"ProductVersion"], strings [L"CompanyName"]);
+        
+        // TODO: latest versons in tooltip, instead of company name
 
         if (nid.hIcon) {
-
             DestroyIcon (nid.hIcon);
         }
         nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
@@ -268,8 +356,9 @@ namespace {
         MessageBoxIndirect (&box);
     }
 
+    bool check ();
     void track (HWND hWnd, POINT pt) {
-        UINT style = TPM_RIGHTBUTTON;
+        UINT style = TPM_RIGHTBUTTON | TPM_RETURNCMD;
         BOOL align = FALSE;
 
         if (SystemParametersInfo (SPI_GETMENUDROPALIGNMENT, 0, &align, 0)) {
@@ -279,8 +368,10 @@ namespace {
         }
 
         SetForegroundWindow (hWnd);
-        TrackPopupMenu (menu, style, pt.x, pt.y, 0, hWnd, NULL);
-        Shell_NotifyIcon (NIM_SETFOCUS, &nid);
+        if (auto command = TrackPopupMenu (menu, style, pt.x, pt.y, 0, hWnd, NULL)) {
+            PostMessage (hWnd, WM_COMMAND, command, 0);
+            Shell_NotifyIcon (NIM_SETFOCUS, &nid);
+        }
         PostMessage (hWnd, WM_NULL, 0, 0);
     }
 
@@ -291,12 +382,42 @@ namespace {
                 nid.hWnd = hWnd;
                 Shell_NotifyIcon (NIM_ADD, &nid);
                 Shell_NotifyIcon (NIM_SETVERSION, &nid);
-                    
+
                 update ();
+                //SetTimer (hWnd, 1, 5000, NULL);
                 return 0;
-            
-            //case WM_GETICON:
-                //return (LRESULT) nid.hIcon;
+
+            case WM_TIMER:
+                switch (wParam) {
+                    case 1:
+
+                        if (nid.uFlags & NIF_INFO) {
+                            Print (L"Remove\n");
+                            nid.uFlags &= ~NIF_INFO;
+                            nid.dwInfoFlags = 0;
+                            nid.szInfo [0] = L'\0';
+                        } else {
+                            Print (L"Set\n");
+                            nid.dwState = 0;
+                            nid.dwStateMask = NIS_HIDDEN;
+                            nid.uFlags |= NIF_INFO;
+                            nid.dwInfoFlags = 0;
+                            std::wcsncpy (nid.szInfo, L"1 2 3 4 5 6 7 8 9 0 20 x3 4 5 6 7 8 9 0 302 3 4 5 6 7 8 9 0 402 3 4 5 6 7 8 9 0 502 3 4 5 6 7 8 9 0 602 3 4 5 6 7 8 9 0 702 3 4 5 6 7 8 9 0 802 3 4 5 6 7 8 9 0 902 3 4 5 6 7 8 9 0 100 3 4 5 6 7 8 9 0 110 3 4 5 6 7 8 9 0 ", 256);
+                        }
+
+                        nid.hBalloonIcon = nid.hIcon;
+                        nid.uTimeout = 60000;
+
+                        if (IsWindows7OrGreater ()) {
+                            nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+                        }
+
+                        std::wcsncpy (nid.szInfoTitle, L"Title 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0", 64);
+                        Shell_NotifyIcon (NIM_MODIFY, &nid);
+
+                        break;
+                }
+                break;
 
             case WM_DPICHANGED:
                 update ();
@@ -306,14 +427,6 @@ namespace {
                 switch (LOWORD (lParam)) {
                     case WM_LBUTTONDBLCLK:
                         wndproc (hWnd, WM_COMMAND, GetMenuDefaultItem (menu, FALSE, 0) & 0xFFFF, 0);
-                        break;
-
-                    case WM_RBUTTONUP:
-                        if (!IsWindowsVistaOrGreater ()) { // XP
-                            POINT pt = { 0, 0 };
-                            GetCursorPos (&pt);
-                            track (hWnd, pt);
-                        }
                         break;
 
                     case WM_CONTEXTMENU:
@@ -327,6 +440,10 @@ namespace {
                         // run the program itself, to open config dialog
                         break;
                     case 0x11:
+                        check ();
+                        // check now: start download, reset timer
+                        break;
+                    case 0x1B:
                         about ();
                         break;
                     case 0x1A:
@@ -379,5 +496,90 @@ namespace {
                         return DefWindowProc (hWnd, message, wParam, lParam);
         }
         return 0;
+    }
+
+    bool check () {
+        if (auto connection = WinHttpConnect (internet, L"localhost", 8080,/* L"changewindows.org", 443, */0)) {
+            if (auto request = WinHttpOpenRequest (connection, NULL, L"/OnVampires/www/predpoklady-a-priprava", NULL,
+                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, /*WINHTTP_FLAG_SECURE*/0)) {
+
+                if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) connection)) {
+                    return true;
+
+                } else {
+                    WinHttpCloseHandle (request);
+                    WinHttpCloseHandle (connection);
+                }
+            } else {
+                WinHttpCloseHandle (connection);
+            }
+            return false;
+        }
+    }
+
+    char buffer [8193];
+
+    void WINAPI InternetHandler (HINTERNET request, DWORD_PTR connection, DWORD code, LPVOID data_, DWORD size) {
+        auto data = static_cast <char *> (data_);
+        Print (L"InternetHandler @ %p %08X: %p %p %u\n", &data, code, buffer, data, size);
+        switch (code) {
+
+            case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
+            case WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:
+                // this->report (raddi::log::level::error, 0x26);
+                break;
+
+                // successes return early here
+            case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
+                if (WinHttpReceiveResponse (request, NULL))
+                    return;
+
+                // this->report (raddi::log::level::error, 0x25, "start");
+                break;
+
+            case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
+                size = sizeof buffer;
+                if (WinHttpQueryHeaders (request, WINHTTP_QUERY_STATUS_CODE, NULL, buffer, &size, WINHTTP_NO_HEADER_INDEX)) {
+
+                    auto status = std::wcstoul (reinterpret_cast <const wchar_t *> (buffer), nullptr, 10);
+                    if (status == 200) {
+                        if (WinHttpQueryDataAvailable (request, NULL))
+                            return;
+
+                        //Print (L"InternetHandler @ WINHTTP_QUERY_STATUS_CODE: %u\n", status);
+                        Print (L"InternetHandler @ %p WinHttpQueryDataAvailable error %u\n", &data, GetLastError ());
+                    } else
+                        Print (L"InternetHandler @ %p WINHTTP_QUERY_STATUS_CODE status %u\n", &data, status);
+                } else
+                    Print (L"InternetHandler @ %p WinHttpQueryHeaders error %u\n", &data, GetLastError ());
+
+                break;
+
+                // NOTE: I really need to stop writing code like this
+
+            case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
+                Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_READ_COMPLETE: %u\n", &data, size);
+                if (size) {
+                    data [size] = '\0';
+
+                    // data...
+
+                    [[ fallthrough ]];
+
+            case WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
+                Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE...\n", &data);
+                if (WinHttpReadData (request, buffer, sizeof buffer - 1, NULL)) {
+                    Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: true\n", &data);
+                    return;
+                } else {
+                    Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: error %u\n", &data, GetLastError ());
+                }
+                }
+        }
+
+//cancelled:
+        WinHttpCloseHandle (request);
+        WinHttpCloseHandle ((HINTERNET) connection);
+        Print (L"InternetHandler closed\n");
     }
 }

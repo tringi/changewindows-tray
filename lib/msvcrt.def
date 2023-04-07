@@ -1,4 +1,6 @@
 EXPORTS 
 	_snwprintf
 	wcscmp
+	wcsncpy
+	wcstoul
 	memset

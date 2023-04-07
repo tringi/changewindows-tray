@@ -151,7 +151,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
     </Link>
     <PreBuildEvent>
@@ -196,7 +196,7 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>.rdata=.text</MergeSections>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
@@ -234,7 +234,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
     </Link>
     <PreBuildEvent>
@@ -269,7 +269,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
     </Link>
     <PreBuildEvent>
@@ -315,7 +315,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
@@ -367,7 +367,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
