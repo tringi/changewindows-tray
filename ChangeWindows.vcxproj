@@ -147,7 +147,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>5.1</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -191,7 +191,7 @@
       <GenerateMapFile>true</GenerateMapFile>
       <SetChecksum>true</SetChecksum>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>5.1</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -230,7 +230,7 @@
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>5.2</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -309,7 +309,7 @@
       <GenerateMapFile>true</GenerateMapFile>
       <SetChecksum>true</SetChecksum>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>5.2</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -381,7 +381,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ChangeWindows.cpp" />
-    <ClCompile Include="Windows_AllowIsolatedMessage.cpp" />
+    <ClCompile Include="gason.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ChangeWindows.info" />
@@ -393,7 +393,7 @@
     <ResourceCompile Include="ChangeWindows.rc" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Windows_AllowIsolatedMessage.hpp" />
+    <ClInclude Include="gason.h" />
     <ClInclude Include="Windows_Symbol.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

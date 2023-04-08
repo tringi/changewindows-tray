@@ -12,11 +12,13 @@
 #include <cwchar>
 
 #include "Windows_Symbol.hpp"
+#include "gason.h"
 
 #pragma warning (disable:6262) // stack usage warning
 #pragma warning (disable:26812) // unscoped enum warning
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
+extern "C" int _fltused = 0;
 
 namespace {
     const wchar_t name [] = L"TRIMCORE.ChangeWindows";
@@ -28,8 +30,16 @@ namespace {
     UINT WM_TaskbarCreated = WM_NULL;
     HKEY data = NULL;       // last versions
     HKEY settings = NULL;   // app settings
+    HANDLE heap = NULL;
     HINTERNET internet = NULL;
     HINTERNET connection = NULL;
+
+    BOOL (WINAPI * pfnChangeWindowMessageFilterEx) (HWND, UINT, DWORD, LPVOID) = NULL;
+
+    bool checking = false;
+    char buffer [128 * 1024];
+    char allocator [sizeof buffer];
+    auto allocated = 0u;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -60,7 +70,8 @@ namespace {
         TerminateCommand = 1,
         ShowCommand = 2,
         HideCommand = 3,
-        SettingCommand = 4,
+        CheckCommand = 4,
+        SettingCommand = 5,
     };
 
     struct VS_HEADER {
@@ -115,8 +126,6 @@ namespace {
             && GetLastError () != ERROR_ALREADY_EXISTS;
     }
 
-    BOOL (WINAPI * pfnChangeWindowMessageFilterEx) (HWND, UINT, DWORD, LPVOID) = NULL;
-
     bool AllowIsolatedMessage (HWND hWnd, UINT message, bool allow) {
         if (hWnd && pfnChangeWindowMessageFilterEx) // Win7+
             return pfnChangeWindowMessageFilterEx (hWnd, message, allow ? MSGFLT_ALLOW : MSGFLT_DISALLOW, NULL);
@@ -155,6 +164,7 @@ namespace {
         auto cmdline = GetCommandLine ();
 
         if (ends_with (cmdline, L"terminate")) return TerminateCommand;
+        if (ends_with (cmdline, L"check")) return CheckCommand;
         if (ends_with (cmdline, L"hide")) return HideCommand;
         if (ends_with (cmdline, L"show")) return ShowCommand;
 
@@ -232,6 +242,7 @@ namespace {
     }
 
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data, DWORD size);
+
     void InitInternet () {
         wchar_t agent [64];
         _snwprintf (agent, 64, L"%s/%u.%u (https://changewindows.org)",
@@ -247,9 +258,15 @@ namespace {
             connection = WinHttpConnect (internet, L"changewindows.org", 443, 0);
         }
     }
+
+    void update ();
+    void about ();
+    bool check ();
 }
 
-int WinMainCRTStartup () {
+void WinMainCRTStartup () {
+    heap = GetProcessHeap ();
+
     if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
         AllocConsole ();
     }
@@ -292,7 +309,7 @@ int WinMainCRTStartup () {
                 WM_Application = RegisterWindowMessage (name);
                 WM_TaskbarCreated = RegisterWindowMessage (L"TaskbarCreated");
 
-                window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0,0,0,0,0, HWND_DESKTOP,
+                window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0, 0, 0, 0, 0, HWND_DESKTOP,
                                        NULL, reinterpret_cast <HINSTANCE> (&__ImageBase), NULL);
                 if (window) {
 
@@ -301,6 +318,7 @@ int WinMainCRTStartup () {
                     AllowIsolatedMessage (window, WM_TaskbarCreated, true);
 
                     InitInternet ();
+                    check ();
 
                     MSG message;
                     while (GetMessage (&message, NULL, 0, 0) > 0) {
@@ -325,10 +343,17 @@ int WinMainCRTStartup () {
 
 namespace {
     void update () {
-        _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s - %s\n%s",
-                    strings [L"ProductName"], strings [L"ProductVersion"], strings [L"CompanyName"]);
+        _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s %u.%u\n...",
+                    strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
+                    HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
         
-        // TODO: latest versons in tooltip, instead of company name
+        if (checking) {
+            // add "Checking..."
+        } else {
+            // add latest versons
+        }
+
+        // TODO: add badge to icon (if enabled)
 
         if (nid.hIcon) {
             DestroyIcon (nid.hIcon);
@@ -397,13 +422,12 @@ namespace {
                 switch (wParam) {
                     case 1:
 
+                        // TODO: option to enable/disable balloons in registry
                         if (nid.uFlags & NIF_INFO) {
-                            Print (L"Remove\n");
                             nid.uFlags &= ~NIF_INFO;
                             nid.dwInfoFlags = 0;
                             nid.szInfo [0] = L'\0';
                         } else {
-                            Print (L"Set\n");
                             nid.dwState = 0;
                             nid.dwStateMask = NIS_HIDDEN;
                             nid.uFlags |= NIF_INFO;
@@ -447,7 +471,8 @@ namespace {
                         break;
                     case 0x11:
                         check ();
-                        // check now: start download, reset timer
+                        update ();
+                        // TODO: reset timer
                         break;
                     case 0x1B:
                         about ();
@@ -488,6 +513,11 @@ namespace {
                             nid.dwStateMask = NIS_HIDDEN;
                             Shell_NotifyIcon (NIM_MODIFY, &nid);
                             break;
+                        case CheckCommand:
+                            check ();
+                            update ();
+                            // TODO: reset timer
+                            break;
                         case TerminateCommand:
                             SendMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
                     }
@@ -505,22 +535,26 @@ namespace {
     }
 
     bool check () {
-        if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
-                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
+        if (checking == false) {
+            checking = true;
 
-            if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) NULL)) {
-                return true;
+            if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
+                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
+
+                if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) NULL)) {
+                    return true;
+                }
+                WinHttpCloseHandle (request);
             }
-            WinHttpCloseHandle (request);
         }
+        checking = false;
         return false;
     }
 
-    char buffer [8193];
+    std::size_t received = 0;
 
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
         auto data = static_cast <char *> (data_);
-        Print (L"InternetHandler @ %p %08X: %p %p %u\n", &data, code, buffer, data, size);
         switch (code) {
 
             case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
@@ -528,7 +562,6 @@ namespace {
                 // report error
                 break;
 
-                // successes return early here
             case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
                 if (WinHttpReceiveResponse (request, NULL))
                     return;
@@ -554,29 +587,97 @@ namespace {
 
                 break;
 
-                // NOTE: I really need to stop writing code like this
-
             case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
-                Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_READ_COMPLETE: %u\n", &data, size);
                 if (size) {
-                    data [size] = '\0';
-
-                    // data...
+                    received += size;
+                    buffer [received] = '\0';
 
                     [[ fallthrough ]];
 
             case WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
-                Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE...\n", &data);
-                if (WinHttpReadData (request, buffer, sizeof buffer - 1, NULL)) {
-                    Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: true\n", &data);
-                    return;
-                } else {
-                    Print (L"InternetHandler @ %p WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE: error %u\n", &data, GetLastError ());
-                }
+                    if (WinHttpReadData (request, buffer + received, (DWORD) (sizeof buffer - received - 1), NULL))
+                        return;
                 }
         }
 
         WinHttpCloseHandle (request);
         Print (L"InternetHandler closed\n");
+
+        if (received) {
+            Print (L"InternetHandler got %u data\n", received);
+
+            // find json content
+            if (auto json = std::strstr (buffer, "<div id=\"app\" data-page=\"")) {
+                json += 25;
+
+                auto end = std::strchr (json, '"');
+                if (end) {
+                    *end = '\0';
+                    Print (L"InternetHandler got %u json\n", end - json);
+                }
+
+                // transcode html entities
+                auto p = json;
+                auto o = json;
+
+                while (p != end) {
+                    switch (*p) {
+                        case '&':
+                            if (std::strncmp (p + 1, "amp;", 4) == 0) { p += 4; *p = '&'; }
+                            if (std::strncmp (p + 1, "quot;", 5) == 0) { p += 5; *p = '"'; }
+                            if (std::strncmp (p + 1, "raquo;", 6) == 0) { p += 6; *p = '>'; }
+
+                            break;
+                        case '\\':
+                            ++p;
+                            break;
+                    }
+                    *o++ = *p++;
+                }
+                *o = '\0';
+
+                Print (L"InternetHandler json transcoded to %u\n", o - json);
+
+                auto h = CreateFile (L"out.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+                if (h != INVALID_HANDLE_VALUE) {
+                    DWORD red;
+                    WriteFile (h, json, o - json, &red, NULL);
+                    CloseHandle (h);
+                }
+
+                // parse
+                JsonValue tree;
+                if (jsonParse (json, &end, &tree) == JSON_OK) {
+
+                    // get scope
+
+                    Print (L"InternetHandler json parsed\n");
+                    // extract data, compare with currently stored, update data, generate changelist
+
+                } else {
+                    // error
+                }
+
+                // drop bump allocator
+                Print (L"InternetHandler allocated %u\n", allocated);
+                allocated = 0;
+            }
+        }
+
+cancelled:
+        received = 0;
+
+        // done
+        checking = false;
+        update ();
     }
+}
+
+JsonNode * jsonAllocate (std::size_t n) {
+    JsonNode * node = nullptr;
+    if (allocated <= sizeof allocator - n) {
+        node = (JsonNode *) &allocator [allocated];
+        allocated += n;
+    }
+    return node;
 }

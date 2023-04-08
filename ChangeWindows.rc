@@ -22,11 +22,10 @@ STRINGTABLE
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
     1   "This program... "
-    /*
-    2   "Position is saved when Notepad is closed with the file open, and used when opening the file directly.\n\n"
+    2   "...\n\n"
     3   "Command-line parameters:\n"
     4   " • hide – starts without tray icon or hides existing one\n"
     5   " • show – restores tray icon of the running program, if any\n"
-    8   " • terminate – closes running instance\n"
-    */
+    6   " • check – instructs running instance to check for updates\n"
+    7   " • terminate – closes running instance\n"
 }

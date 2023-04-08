@@ -1,6 +1,10 @@
 EXPORTS 
 	_snwprintf
+	strncmp
+	strstr
+	strchr
 	wcscmp
 	wcsncpy
 	wcstoul
 	memset
+	memcpy
