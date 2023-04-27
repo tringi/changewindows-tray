@@ -3,8 +3,10 @@ EXPORTS
 	strncmp
 	strstr
 	strchr
+	wcslen
 	wcscmp
 	wcsncpy
 	wcstoul
+	_wassert
 	memset
 	memcpy

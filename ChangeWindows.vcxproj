@@ -152,7 +152,8 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <EntryPointSymbol>Main</EntryPointSymbol>
+      <EntryPointSymbol>
+      </EntryPointSymbol>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -235,7 +236,8 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <EntryPointSymbol>Main</EntryPointSymbol>
+      <EntryPointSymbol>
+      </EntryPointSymbol>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -270,7 +272,8 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
-      <EntryPointSymbol>Main</EntryPointSymbol>
+      <EntryPointSymbol>
+      </EntryPointSymbol>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>

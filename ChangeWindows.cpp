@@ -28,18 +28,18 @@ namespace {
     HWND window = NULL;
     UINT WM_Application = WM_NULL;
     UINT WM_TaskbarCreated = WM_NULL;
-    HKEY data = NULL;       // last versions
     HKEY settings = NULL;   // app settings
-    HANDLE heap = NULL;
+    HKEY builds = NULL;     // last versions
+    HKEY alerts = NULL;     // reported changes
     HINTERNET internet = NULL;
     HINTERNET connection = NULL;
 
     BOOL (WINAPI * pfnChangeWindowMessageFilterEx) (HWND, UINT, DWORD, LPVOID) = NULL;
 
-    bool checking = false;
-    char buffer [128 * 1024];
+    auto checking = 0u;
+    char buffer [512 * 1024];
     char allocator [sizeof buffer];
-    auto allocated = 0u;
+    std::size_t allocated = 0;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -136,7 +136,7 @@ namespace {
         return allow;
     }
 
-    bool ends_with (const wchar_t * cmdline, const wchar_t * value) {
+    bool CommandLineEndsWith (const wchar_t * cmdline, const wchar_t * value) {
         auto llen = std::wcslen (cmdline);
         auto vlen = std::wcslen (value);
 
@@ -163,10 +163,10 @@ namespace {
     Command ParseCommandLine () {
         auto cmdline = GetCommandLine ();
 
-        if (ends_with (cmdline, L"terminate")) return TerminateCommand;
-        if (ends_with (cmdline, L"check")) return CheckCommand;
-        if (ends_with (cmdline, L"hide")) return HideCommand;
-        if (ends_with (cmdline, L"show")) return ShowCommand;
+        if (CommandLineEndsWith (cmdline, L"terminate")) return TerminateCommand;
+        if (CommandLineEndsWith (cmdline, L"check")) return CheckCommand;
+        if (CommandLineEndsWith (cmdline, L"hide")) return HideCommand;
+        if (CommandLineEndsWith (cmdline, L"show")) return ShowCommand;
 
         return NoCommand;
     }
@@ -215,6 +215,10 @@ namespace {
         return version && strings.data;
     }
 
+    void SetSettingsValue (const wchar_t * name, DWORD value) {
+        RegSetValueEx (settings, name, 0, REG_DWORD, reinterpret_cast <const BYTE *> (&value), sizeof value);
+    }
+
     bool InitRegistry () {
         HKEY hKeySoftware = NULL;
         if (RegCreateKeyEx (HKEY_CURRENT_USER, L"SOFTWARE", 0, NULL, 0,
@@ -229,16 +233,26 @@ namespace {
                                     KEY_ALL_ACCESS, NULL, &settings, &disp) == ERROR_SUCCESS) {
                     if (disp == REG_CREATED_NEW_KEY) {
                         // defaults
-                        // RegSetSettingsValue (L"color", 1); // white
+                        SetSettingsValue (L"check", 180); // minutes
                     }
 
-                    RegCreateKeyEx (settings, L"data", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &data, NULL);
+                    RegCreateKeyEx (settings, L"builds", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &builds, NULL);
+                    RegCreateKeyEx (settings, L"alerts", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &alerts, NULL);
                 }
                 RegCloseKey (hKeyTRIMCORE);
             }
             RegCloseKey (hKeySoftware);
         }
-        return data && settings;
+        return alerts && settings;
+    }
+
+    DWORD GetSettingsValue (const wchar_t * name, DWORD default_) {
+        DWORD size = sizeof (DWORD);
+        DWORD value = 0;
+        if (RegQueryValueEx (settings, name, NULL, NULL, reinterpret_cast <BYTE *> (&value), &size) == ERROR_SUCCESS)
+            return value;
+        else
+            return default_;
     }
 
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data, DWORD size);
@@ -262,11 +276,14 @@ namespace {
     void update ();
     void about ();
     bool check ();
+    void trim ();
 }
 
+#ifndef NDEBUG
+int WinMain (HINSTANCE, HINSTANCE, LPSTR, int) {
+#else
 void WinMainCRTStartup () {
-    heap = GetProcessHeap ();
-
+#endif
     if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
         AllocConsole ();
     }
@@ -346,7 +363,7 @@ namespace {
         _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s %u.%u\n...",
                     strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
                     HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
-        
+
         if (checking) {
             // add "Checking..."
         } else {
@@ -534,39 +551,196 @@ namespace {
         return 0;
     }
 
-    bool check () {
-        if (checking == false) {
-            checking = true;
+    auto queued = 0u;
+    struct {
+        wchar_t platform [32];
+        void (*callback)(JsonValue) = nullptr;
+    } queue [64];
 
-            if (auto request = WinHttpOpenRequest (connection, NULL, L"/timeline", NULL,
-                                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
 
-                if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) NULL)) {
-                    return true;
-                }
-                WinHttpCloseHandle (request);
+    bool submit (const wchar_t * path, void (*callback)(JsonValue)) {
+        if (auto request = WinHttpOpenRequest (connection, NULL, path, NULL,
+                                               WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
+
+            if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) callback)) {
+                Print (L"submitted %s...\n", path);
+                return true;
             }
+            WinHttpCloseHandle (request);
         }
-        checking = false;
+        Print (L"submit error %u\n", GetLastError ());
+        InterlockedDecrement (&checking);
         return false;
     }
+
+    template <typename T, std::size_t N>
+    constexpr std::size_t array_size (T (&) [N]) { return N; };
+
+    void enqueue (const wchar_t * path, void (*callback)(JsonValue)) {
+        if (queued < array_size (queue)) {
+            queue [queued].callback = callback;
+            std::wcsncpy (queue [queued].platform, path, array_size (queue [queued].platform));
+            ++queued;
+        }
+    }
+
+    void platform (JsonValue json) {
+
+        Print (L"got platform\n");
+    }
+
+    struct tie {
+        const tie *  link = nullptr;
+        char *       key = nullptr;
+        unsigned int index = ~0u;
+
+        void display () const {
+            if (this->link)
+                this->link->display ();
+
+            if (this->key) {
+                Print (L"[%hs] ", this->key);
+            } else
+            if (this->index != ~0u) {
+                Print (L"[#%u] ", this->index);
+            }
+        }
+    };
+    void display (JsonValue o, const tie & stack = tie {});
+
+    template <typename T>
+    void get () {
+
+    }
+
+    void timeline (JsonValue json) {
+        Print (L"InternetHandler json parsed\n");
+        display (json, {});
+        // extract data, compare with currently stored, update data, generate changelist
+
+        // list (json, callback, "props", "platforms", nullptr, "slug");
+        // list (json, callback, "props", "channel_platforms", nullptr, "channels");
+
+
+
+        // request next paths
+        /*enqueue (L"/timeline/pc", platform);
+        enqueue (L"/timeline/xbox", platform);
+        enqueue (L"/timeline/server", platform);
+        enqueue (L"/timeline/holographic", platform);
+        enqueue (L"/timeline/team", platform);
+        enqueue (L"/timeline/azure", platform);
+        enqueue (L"/timeline/sdk", platform);
+        enqueue (L"/timeline/iso", platform);
+        // */
+    }
+
+    bool check () {
+        if (InterlockedCompareExchange (&checking, 1u, 0u) == 0u) {
+            if (submit (L"/timeline", timeline))
+                return true;
+        }
+        return false;
+    }
+
+    bool empty (JsonValue o) {
+        for (auto i : o) {
+            return false;
+        }
+        return true;
+    }
+
+
+    bool display (const tie & stack, const wchar_t * format, ...) {
+        va_list args;
+        va_start (args, format);
+
+        stack.display ();
+
+        wchar_t buffer [1024];
+        DWORD length = wvsprintf (buffer, format, args);
+
+        DWORD written;
+        WriteConsole (GetStdHandle (STD_OUTPUT_HANDLE), buffer, length, &written, NULL);
+
+        va_end (args);
+        return false;
+    }
+
+    void display (JsonValue o, const tie & stack) {
+        switch (o.getTag ()) {
+            case JSON_NUMBER:
+                display (stack, L"= %f\n", o.toNumber ());
+                break;
+            case JSON_STRING:
+                display (stack, L"= \"%hs\"\n", o.toString ());
+                break;
+            case JSON_ARRAY:
+                if (!empty (o)) {
+                    auto n = 0u;
+                    for (auto i : o) {
+                        display (i->value, { &stack, nullptr, n++ });
+                    }
+                }
+                break;
+            case JSON_OBJECT:
+                if (!empty (o)) {
+                    auto n = 0u;
+                    for (auto i : o) {
+                        display (i->value, { &stack, i->key, n++ });
+                    }
+                }
+                break;
+            case JSON_TRUE:
+                display (stack, L"= true\n");
+                break;
+            case JSON_FALSE:
+                display (stack, L"= false\n");
+                break;
+            case JSON_NULL:
+                display (stack, L"= null\n");
+                break;
+        }
+    }
+
+    // Data: simply array
+    //  - list view groups: PC, Xbox, Server, Holo, Team, Azure, SDK
+    //  - list view items (3 lines):
+    //      Preview     LTSC 2021
+    //      25217.1000  20348.1668
+    //      2022/08/11  2023/04/11
+    //  - report:
+    //     - UBR in channel increased (updates)
+    //     - new build number in channel
+    //     - new channel added
+    
+    // Registry name: "pc|Canary" or "pc|17763"
+    /*struct RegistryValue {
+        std::uint32_t date;
+        std::uint16_t build;
+        std::uint16_t release; // UBR
+    };*/
+    // When set alert: "sdk|23***" or "PC" (means all new)
+
+    // Mapping slugs to texts
 
     std::size_t received = 0;
 
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
         auto data = static_cast <char *> (data_);
+        // Print (L"InternetHandler @ %p %08X\n", &data, code);
         switch (code) {
 
             case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
             case WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:
-                // report error
+                Print (L"InternetHandler @ %p error %u\n", &data, GetLastError ());
                 break;
 
             case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
                 if (WinHttpReceiveResponse (request, NULL))
                     return;
 
-                // report error
+                Print (L"InternetHandler @ %p request error %u\n", &data, GetLastError ());
                 break;
 
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
@@ -601,10 +775,9 @@ namespace {
         }
 
         WinHttpCloseHandle (request);
-        Print (L"InternetHandler closed\n");
+        Print (L"request %p end with %u bytes\n", request, received);
 
         if (received) {
-            Print (L"InternetHandler got %u data\n", received);
 
             // find json content
             if (auto json = std::strstr (buffer, "<div id=\"app\" data-page=\"")) {
@@ -613,63 +786,76 @@ namespace {
                 auto end = std::strchr (json, '"');
                 if (end) {
                     *end = '\0';
-                    Print (L"InternetHandler got %u json\n", end - json);
-                }
+                
 
-                // transcode html entities
-                auto p = json;
-                auto o = json;
+                    // transcode html entities
+                    auto p = json;
+                    auto o = json;
 
-                while (p != end) {
-                    switch (*p) {
-                        case '&':
-                            if (std::strncmp (p + 1, "amp;", 4) == 0) { p += 4; *p = '&'; }
-                            if (std::strncmp (p + 1, "quot;", 5) == 0) { p += 5; *p = '"'; }
-                            if (std::strncmp (p + 1, "raquo;", 6) == 0) { p += 6; *p = '>'; }
+                    while (p != end) {
+                        switch (*p) {
+                            case '&':
+                                     if (std::strncmp (p + 1, "amp;", 4) == 0) { p += 4; *p = '&'; }
+                                else if (std::strncmp (p + 1, "quot;", 5) == 0) { p += 5; *p = '"'; }
+                                else if (std::strncmp (p + 1, "raquo;", 6) == 0) { p += 6; *p = '>'; } // good enough
+                                else if (std::strncmp (p + 1, "laquo;", 6) == 0) { p += 6; *p = '<'; }
 
-                            break;
-                        case '\\':
-                            ++p;
-                            break;
+                                break;
+                            case '\\':
+                                ++p;
+                                break;
+                        }
+                        *o++ = *p++;
                     }
-                    *o++ = *p++;
-                }
-                *o = '\0';
+                    *o = '\0';
 
-                Print (L"InternetHandler json transcoded to %u\n", o - json);
+                    /*wchar_t filename [64];
+                    _snwprintf (filename, 64, L"json %p err.txt", request);
+                    auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+                    if (h != INVALID_HANDLE_VALUE) {
+                        DWORD red;
+                        WriteFile (h, json, o - json, &red, NULL);
+                        CloseHandle (h);
+                    }// */
 
-                auto h = CreateFile (L"out.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-                if (h != INVALID_HANDLE_VALUE) {
-                    DWORD red;
-                    WriteFile (h, json, o - json, &red, NULL);
-                    CloseHandle (h);
-                }
+                    // parse
 
-                // parse
-                JsonValue tree;
-                if (jsonParse (json, &end, &tree) == JSON_OK) {
+                    JsonValue tree;
+                    if (jsonParse (json, &end, &tree) == JSON_OK) {
+                        ((void (*)(JsonValue)) context) (tree);
+                    } else {
+                        Print (L"request %p JSON error\n", request);
+                    }
 
-                    // get scope
+                    // drop bump allocator
 
-                    Print (L"InternetHandler json parsed\n");
-                    // extract data, compare with currently stored, update data, generate changelist
-
+                    allocated = 0;
                 } else {
-                    // error
+                    Print (L"request %p no end!\n", request);
                 }
-
-                // drop bump allocator
-                Print (L"InternetHandler allocated %u\n", allocated);
-                allocated = 0;
             }
+
+            received = 0;
+            Sleep (500);
         }
 
-cancelled:
-        received = 0;
+        if (queued) {
+            queued--;
+            submit (queue [queued].platform, queue [queued].callback);
 
-        // done
-        checking = false;
-        update ();
+        } else {
+            // done
+            InterlockedDecrement (&checking);
+            update ();
+            trim ();
+        }
+    }
+
+    void trim () {
+        if (IsWindows8Point1OrGreater ()) {
+            HeapSetInformation (NULL, HeapOptimizeResources, NULL, 0);
+        }
+        SetProcessWorkingSetSize (GetCurrentProcess (), (SIZE_T) -1, (SIZE_T) -1);
     }
 }
 
