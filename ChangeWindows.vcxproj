@@ -142,18 +142,23 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AssemblerOutput>All</AssemblerOutput>
       <FloatingPointModel>Fast</FloatingPointModel>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.1</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -181,6 +186,7 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <AssemblerOutput>All</AssemblerOutput>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -192,7 +198,7 @@
       <GenerateMapFile>true</GenerateMapFile>
       <SetChecksum>true</SetChecksum>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.1</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -203,6 +209,10 @@
       </EntryPointSymbol>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -226,18 +236,23 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AssemblerOutput>All</AssemblerOutput>
       <FloatingPointModel>Fast</FloatingPointModel>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.1</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -261,6 +276,7 @@
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <AssemblerOutput>All</AssemblerOutput>
       <FloatingPointModel>Fast</FloatingPointModel>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -274,6 +290,10 @@
       <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -301,6 +321,7 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <AssemblerOutput>All</AssemblerOutput>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -312,7 +333,7 @@
       <GenerateMapFile>true</GenerateMapFile>
       <SetChecksum>true</SetChecksum>
       <AdditionalOptions>/STUB:tools\stub.exe /EMITPOGOPHASEINFO /EMITTOOLVERSIONINFO:NO %(AdditionalOptions)</AdditionalOptions>
-      <MinimumRequiredVersion>6.0</MinimumRequiredVersion>
+      <MinimumRequiredVersion>6.1</MinimumRequiredVersion>
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
@@ -324,6 +345,10 @@
       </EntryPointSymbol>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -351,6 +376,7 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <AssemblerOutput>All</AssemblerOutput>
       <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <BuildStlModules>false</BuildStlModules>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -374,6 +400,10 @@
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
+      <HeapReserveSize>262144</HeapReserveSize>
+      <HeapCommitSize>65536</HeapCommitSize>
+      <StackReserveSize>262144</StackReserveSize>
+      <StackCommitSize>65536</StackCommitSize>
     </Link>
     <PreBuildEvent>
       <Command>"$(SolutionDir)tools\rsrcgen.exe" "$(ProjectDir)$(AssemblyName).info" "dir=$(ProjectDir)\" debug=$(UseDebugLibraries) platform=$(ProcessorArchitecture) targetfilename=$(TargetFileName)</Command>
@@ -385,6 +415,7 @@
   <ItemGroup>
     <ClCompile Include="ChangeWindows.cpp" />
     <ClCompile Include="gason.cpp" />
+    <ClCompile Include="Windows_MatchFilename.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="ChangeWindows.info" />
@@ -397,6 +428,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="gason.h" />
+    <ClInclude Include="Windows_MatchFilename.hpp" />
     <ClInclude Include="Windows_Symbol.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

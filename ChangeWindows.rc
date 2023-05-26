@@ -8,7 +8,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     POPUP ""
     {
         MENUITEM "TBD: Dialog", 0x10
-        MENUITEM "TBD: Check now", 0x11
+        MENUITEM "Check now", 0x11
         MENUITEM SEPARATOR
         MENUITEM "Open &www.changewindows.org…", 0x1A
         MENUITEM "&About…", 0x1B
@@ -27,5 +27,6 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     4   " • hide – starts without tray icon or hides existing one\n"
     5   " • show – restores tray icon of the running program, if any\n"
     6   " • check – instructs running instance to check for updates\n"
-    7   " • terminate – closes running instance\n"
+    7   " • settings – instructs running instance to open Settings dialog\n"
+    8   " • terminate – closes running instance\n"
 }

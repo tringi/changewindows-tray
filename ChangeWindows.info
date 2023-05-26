@@ -4,14 +4,14 @@
 [description]
 	product 		= ChangeWindows Notification
 	filename		= %targetfilename%
-	filedescription		= ChangeWindows Tray Notification App
+	filedescription		= ChangeWindows Notification App
 	internalname		= ChangeWindows
 	companyname		= TRIM CORE SOFTWARE s.r.o.
 
 	major = 0
 	minor = 1
 	patch = 0
-	build = 187
+	build = 318
 
 [versioninfo]
 	filename	= %dir%\%internalname%-vi.rc

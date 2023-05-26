@@ -1,8 +1,11 @@
 EXPORTS 
 	_snwprintf
 	strncmp
+	strncpy
+	strtoul
 	strstr
 	strchr
+	strcmp
 	wcslen
 	wcscmp
 	wcsncpy

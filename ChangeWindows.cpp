@@ -12,9 +12,11 @@
 #include <cwchar>
 
 #include "Windows_Symbol.hpp"
+#include "Windows_MatchFilename.hpp"
 #include "gason.h"
 
 #pragma warning (disable:6262) // stack usage warning
+#pragma warning (disable:6053) // _snwprintf may not NUL-terminate
 #pragma warning (disable:26812) // unscoped enum warning
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
@@ -31,14 +33,16 @@ namespace {
     HKEY settings = NULL;   // app settings
     HKEY builds = NULL;     // last versions
     HKEY alerts = NULL;     // reported changes
+    HKEY metrics = NULL;    // debug metrics
     HINTERNET internet = NULL;
     HINTERNET connection = NULL;
 
-    BOOL (WINAPI * pfnChangeWindowMessageFilterEx) (HWND, UINT, DWORD, LPVOID) = NULL;
+    static constexpr auto MAX_PLATFORMS = 16u;
 
+    bool installed = false;
     auto checking = 0u;
-    char buffer [512 * 1024];
-    char allocator [sizeof buffer];
+    char buffer [192 * 1024];
+    char allocator [sizeof buffer / 2];
     std::size_t allocated = 0;
 
     LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
@@ -107,7 +111,6 @@ namespace {
         }
     } strings;
 
-
     void Print (const wchar_t * format, ...) {
         va_list args;
         va_start (args, format);
@@ -124,16 +127,6 @@ namespace {
     bool FirstInstance () {
         return CreateMutex (NULL, FALSE, name)
             && GetLastError () != ERROR_ALREADY_EXISTS;
-    }
-
-    bool AllowIsolatedMessage (HWND hWnd, UINT message, bool allow) {
-        if (hWnd && pfnChangeWindowMessageFilterEx) // Win7+
-            return pfnChangeWindowMessageFilterEx (hWnd, message, allow ? MSGFLT_ALLOW : MSGFLT_DISALLOW, NULL);
-
-        if (allow || !hWnd)
-            return ChangeWindowMessageFilter (message, allow ? MSGFLT_ADD : MSGFLT_REMOVE);
-
-        return allow;
     }
 
     bool CommandLineEndsWith (const wchar_t * cmdline, const wchar_t * value) {
@@ -164,6 +157,7 @@ namespace {
         auto cmdline = GetCommandLine ();
 
         if (CommandLineEndsWith (cmdline, L"terminate")) return TerminateCommand;
+        if (CommandLineEndsWith (cmdline, L"settings")) return SettingCommand;
         if (CommandLineEndsWith (cmdline, L"check")) return CheckCommand;
         if (CommandLineEndsWith (cmdline, L"hide")) return HideCommand;
         if (CommandLineEndsWith (cmdline, L"show")) return ShowCommand;
@@ -228,25 +222,31 @@ namespace {
             if (RegCreateKeyEx (hKeySoftware, strings [L"CompanyName"], 0, NULL, 0, // TRIM CORE SOFTWARE s.r.o.
                                 KEY_ALL_ACCESS, NULL, &hKeyTRIMCORE, NULL) == ERROR_SUCCESS) {
 
-                DWORD disp = 0;
+                DWORD disposition = 0;
                 if (RegCreateKeyEx (hKeyTRIMCORE, strings [L"InternalName"], 0, NULL, 0,
-                                    KEY_ALL_ACCESS, NULL, &settings, &disp) == ERROR_SUCCESS) {
-                    if (disp == REG_CREATED_NEW_KEY) {
+                                    KEY_ALL_ACCESS, NULL, &settings, &disposition) == ERROR_SUCCESS) {
+                    if (disposition == REG_CREATED_NEW_KEY) {
                         // defaults
                         SetSettingsValue (L"check", 180); // minutes
+                        SetSettingsValue (L"toast", 1); // balloon notifications
+                        SetSettingsValue (L"legacy", 0); // report on legacy platforms
+
+                        // do not report first check
+                        installed = true;
                     }
 
                     RegCreateKeyEx (settings, L"builds", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &builds, NULL);
                     RegCreateKeyEx (settings, L"alerts", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &alerts, NULL);
+                    RegCreateKeyEx (settings, L"metrics", 0, NULL, 0, KEY_ALL_ACCESS, NULL, &metrics, NULL);
                 }
                 RegCloseKey (hKeyTRIMCORE);
             }
             RegCloseKey (hKeySoftware);
         }
-        return alerts && settings;
+        return builds && alerts && settings;
     }
 
-    DWORD GetSettingsValue (const wchar_t * name, DWORD default_) {
+    DWORD GetSettingsValue (const wchar_t * name, DWORD default_ = 0) {
         DWORD size = sizeof (DWORD);
         DWORD value = 0;
         if (RegQueryValueEx (settings, name, NULL, NULL, reinterpret_cast <BYTE *> (&value), &size) == ERROR_SUCCESS)
@@ -255,17 +255,31 @@ namespace {
             return default_;
     }
 
+    void SetMetricsValue (const wchar_t * name, DWORD value) {
+        RegSetValueEx (metrics, name, 0, REG_DWORD, reinterpret_cast <const BYTE *> (&value), sizeof value);
+    }
+    void UpdateMetricsMaximum (const wchar_t * name, DWORD value) {
+        DWORD size = sizeof (DWORD);
+        DWORD previous = 0;
+        if (RegQueryValueEx (metrics, name, NULL, NULL, reinterpret_cast <BYTE *> (&previous), &size) != ERROR_SUCCESS) {
+            previous = 0;
+        }
+        if (value > previous) {
+            RegSetValueEx (metrics, name, 0, REG_DWORD, reinterpret_cast <const BYTE *> (&value), sizeof value);
+        }
+    }
+
+    template <typename T, std::size_t N>
+    constexpr std::size_t array_size (T (&) [N]) { return N; };
+
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data, DWORD size);
 
     void InitInternet () {
-        wchar_t agent [64];
-        _snwprintf (agent, 64, L"%s/%u.%u (https://changewindows.org)",
+        wchar_t agent [128];
+        _snwprintf (agent, array_size (agent), L"%s/%u.%u (https://changewindows.org)",
                     strings [L"InternalName"], HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
         
-        Print (L"User-agent: %s\n", agent);
-
         internet = WinHttpOpen (agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
-
         if (internet) {
             WinHttpSetStatusCallback (internet, InternetHandler, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS, NULL);
 
@@ -277,6 +291,7 @@ namespace {
     void about ();
     bool check ();
     void trim ();
+    void toast ();
 }
 
 #ifndef NDEBUG
@@ -289,6 +304,10 @@ void WinMainCRTStartup () {
     }
 
     auto command = ParseCommandLine ();
+    if (command == SettingCommand) {
+        // settings dialog
+        ExitProcess (ERROR_SUCCESS);
+    }
     if (FirstInstance ()) {
         switch (command) {
             case HideCommand: // start hidden
@@ -329,10 +348,8 @@ void WinMainCRTStartup () {
                 window = CreateWindow ((LPCTSTR) (std::intptr_t) atom, L"", 0, 0, 0, 0, 0, HWND_DESKTOP,
                                        NULL, reinterpret_cast <HINSTANCE> (&__ImageBase), NULL);
                 if (window) {
-
-                    Windows::Symbol (L"USER32", pfnChangeWindowMessageFilterEx, "ChangeWindowMessageFilterEx");
-                    AllowIsolatedMessage (window, WM_Application, true);
-                    AllowIsolatedMessage (window, WM_TaskbarCreated, true);
+                    ChangeWindowMessageFilterEx (window, WM_Application, MSGFLT_ALLOW, NULL);
+                    ChangeWindowMessageFilterEx (window, WM_TaskbarCreated,  MSGFLT_ALLOW, NULL);
 
                     InitInternet ();
                     check ();
@@ -360,7 +377,7 @@ void WinMainCRTStartup () {
 
 namespace {
     void update () {
-        _snwprintf (nid.szTip, sizeof nid.szTip / sizeof nid.szTip [0], L"%s %u.%u\n...",
+        _snwprintf (nid.szTip, array_size (nid.szTip), L"%s %u.%u\n...",
                     strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
                     HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
 
@@ -370,24 +387,31 @@ namespace {
             // add latest versons
         }
 
-        // TODO: add badge to icon (if enabled)
+        // TODO: use badge to icon (if enabled)
 
         if (nid.hIcon) {
             DestroyIcon (nid.hIcon);
         }
         nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
                                        GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
+        nid.uFlags &= ~NIF_INFO;
+        // nid.szInfo [0] = L'\0';
 
         Shell_NotifyIcon (NIM_MODIFY, &nid);
+        Print (L"Shell_NotifyIcon (update)\n");
     }
 
     void about () {
+        wchar_t caption [256];
+        _snwprintf (caption, array_size (caption), L"%s - %s",
+                    strings [L"ProductName"], strings [L"ProductVersion"]);
+
         wchar_t text [4096];
-        auto n = _snwprintf (text, sizeof text / sizeof text [0], L"%s - %s\n%s\n\n",
-                             strings [L"ProductName"], strings [L"ProductVersion"], strings [L"LegalCopyright"]);
+        auto n = _snwprintf (text, array_size (text), L"%s %s\n%s\n\n",
+                             strings [L"FileDescription"], strings [L"ProductVersion"], strings [L"LegalCopyright"]);
         int i = 1;
         int m = 0;
-        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n], sizeof text / sizeof text [0] - n)) {
+        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n], (int) (array_size (text) - n))) {
             n += m;
             i++;
         }
@@ -397,7 +421,7 @@ namespace {
         box.hwndOwner = HWND_DESKTOP;
         box.hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
         box.lpszText = text;
-        box.lpszCaption = strings [L"ProductName"];
+        box.lpszCaption = caption;
         box.dwStyle = MB_USERICON;
         box.lpszIcon = MAKEINTRESOURCE (1);
         box.dwLanguageId = LANG_USER_DEFAULT;
@@ -405,6 +429,16 @@ namespace {
     }
 
     bool check ();
+
+    void schedule () {
+        auto minutes = GetSettingsValue (L"check", 180);
+        if (minutes == 0) {
+            minutes = 180;
+        }
+        SetTimer (window, 1, minutes * 60 * 1000, NULL);
+        Print (L"Check scheduled after %u ms\n", minutes * 60 * 1000);
+    }
+
     void track (HWND hWnd, POINT pt) {
         UINT style = TPM_RIGHTBUTTON | TPM_RETURNCMD;
         BOOL align = FALSE;
@@ -419,6 +453,7 @@ namespace {
         if (auto command = TrackPopupMenu (menu, style, pt.x, pt.y, 0, hWnd, NULL)) {
             PostMessage (hWnd, WM_COMMAND, command, 0);
             Shell_NotifyIcon (NIM_SETFOCUS, &nid);
+            Print (L"Shell_NotifyIcon (NIM_SETFOCUS)\n");
         }
         PostMessage (hWnd, WM_NULL, 0, 0);
     }
@@ -432,46 +467,32 @@ namespace {
                 Shell_NotifyIcon (NIM_SETVERSION, &nid);
 
                 update ();
-                //SetTimer (hWnd, 1, 5000, NULL);
                 return 0;
 
             case WM_TIMER:
                 switch (wParam) {
                     case 1:
-
-                        // TODO: option to enable/disable balloons in registry
-                        if (nid.uFlags & NIF_INFO) {
-                            nid.uFlags &= ~NIF_INFO;
-                            nid.dwInfoFlags = 0;
-                            nid.szInfo [0] = L'\0';
-                        } else {
-                            nid.dwState = 0;
-                            nid.dwStateMask = NIS_HIDDEN;
-                            nid.uFlags |= NIF_INFO;
-                            nid.dwInfoFlags = 0;
-                            std::wcsncpy (nid.szInfo, L"1 2 3 4 5 6 7 8 9 0 20 x3 4 5 6 7 8 9 0 302 3 4 5 6 7 8 9 0 402 3 4 5 6 7 8 9 0 502 3 4 5 6 7 8 9 0 602 3 4 5 6 7 8 9 0 702 3 4 5 6 7 8 9 0 802 3 4 5 6 7 8 9 0 902 3 4 5 6 7 8 9 0 100 3 4 5 6 7 8 9 0 110 3 4 5 6 7 8 9 0 ", 256);
-                        }
-
-                        nid.hBalloonIcon = nid.hIcon;
-                        nid.uTimeout = 60000;
-
-                        if (IsWindows7OrGreater ()) {
-                            nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
-                        }
-
-                        std::wcsncpy (nid.szInfoTitle, L"Title 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0", 64);
-                        Shell_NotifyIcon (NIM_MODIFY, &nid);
-
+                        check ();
+                        break;
+                    case 2:
+                        KillTimer (hWnd, wParam);
+                        toast ();
                         break;
                 }
                 break;
 
             case WM_DPICHANGED:
+                Print (L"WM_DPICHANGED\n");
                 update ();
                 break;
 
             case WM_APP:
                 switch (LOWORD (lParam)) {
+                    case NIN_BALLOONUSERCLICK:
+                        Print (L"NIN_BALLOONUSERCLICK %08X %04X\n", wParam, HIWORD (lParam));
+                        ShellExecute (hWnd, NULL, L"https://www.changewindows.org", NULL, NULL, SW_SHOWDEFAULT);
+                        break;
+
                     case WM_LBUTTONDBLCLK:
                         wndproc (hWnd, WM_COMMAND, GetMenuDefaultItem (menu, FALSE, 0) & 0xFFFF, 0);
                         break;
@@ -488,8 +509,6 @@ namespace {
                         break;
                     case 0x11:
                         check ();
-                        update ();
-                        // TODO: reset timer
                         break;
                     case 0x1B:
                         about ();
@@ -501,6 +520,7 @@ namespace {
                         nid.dwState = NIS_HIDDEN;
                         nid.dwStateMask = NIS_HIDDEN;
                         Shell_NotifyIcon (NIM_MODIFY, &nid);
+                        Print (L"Shell_NotifyIcon (NIS_HIDDEN)\n");
                         break;
                     case 0x1F:
                         PostMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
@@ -532,8 +552,6 @@ namespace {
                             break;
                         case CheckCommand:
                             check ();
-                            update ();
-                            // TODO: reset timer
                             break;
                         case TerminateCommand:
                             SendMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
@@ -541,6 +559,7 @@ namespace {
                     return 0;
                 } else
                     if (message == WM_TaskbarCreated) {
+                        nid.uVersion = NOTIFYICON_VERSION_4;
                         Shell_NotifyIcon (NIM_ADD, &nid);
                         Shell_NotifyIcon (NIM_SETVERSION, &nid);
                         update ();
@@ -551,157 +570,85 @@ namespace {
         return 0;
     }
 
+    struct arguments {
+        bool tool = false;
+        bool legacy = false;
+    } current;
+
+    auto qursor = 0u;
     auto queued = 0u;
     struct {
-        wchar_t platform [32];
-        void (*callback)(JsonValue) = nullptr;
-    } queue [64];
+        void (*   callback) (JsonValue) = nullptr;
+        char      platform [30] = {};
+        arguments args;
+    } queue [MAX_PLATFORMS];
 
+    bool submit (const char * suffix, void (*callback)(JsonValue)) {
+        wchar_t path [48];
+        if (suffix) {
+            _snwprintf (path, array_size (path), L"/timeline/%hs", suffix);
+        } else {
+            _snwprintf (path, array_size (path), L"/timeline");
+        }
 
-    bool submit (const wchar_t * path, void (*callback)(JsonValue)) {
         if (auto request = WinHttpOpenRequest (connection, NULL, path, NULL,
                                                WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)) {
 
             if (WinHttpSendRequest (request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, (DWORD_PTR) callback)) {
-                Print (L"submitted %s...\n", path);
                 return true;
             }
             WinHttpCloseHandle (request);
         }
-        Print (L"submit error %u\n", GetLastError ());
         InterlockedDecrement (&checking);
+        SetMetricsValue (L"http error", GetLastError ()); // store error to report if triggered manually
         return false;
     }
 
-    template <typename T, std::size_t N>
-    constexpr std::size_t array_size (T (&) [N]) { return N; };
-
-    void enqueue (const wchar_t * path, void (*callback)(JsonValue)) {
+    bool enqueue (const char * path, void (*callback)(JsonValue), const arguments & args) {
         if (queued < array_size (queue)) {
             queue [queued].callback = callback;
-            std::wcsncpy (queue [queued].platform, path, array_size (queue [queued].platform));
+            queue [queued].args = args;
+            std::strncpy (queue [queued].platform, path, sizeof queue [queued].platform);
             ++queued;
-        }
-    }
-
-    void platform (JsonValue json) {
-
-        Print (L"got platform\n");
-    }
-
-    struct tie {
-        const tie *  link = nullptr;
-        char *       key = nullptr;
-        unsigned int index = ~0u;
-
-        void display () const {
-            if (this->link)
-                this->link->display ();
-
-            if (this->key) {
-                Print (L"[%hs] ", this->key);
-            } else
-            if (this->index != ~0u) {
-                Print (L"[#%u] ", this->index);
-            }
-        }
-    };
-    void display (JsonValue o, const tie & stack = tie {});
-
-    template <typename T>
-    void get () {
-
-    }
-
-    void timeline (JsonValue json) {
-        Print (L"InternetHandler json parsed\n");
-        display (json, {});
-        // extract data, compare with currently stored, update data, generate changelist
-
-        // list (json, callback, "props", "platforms", nullptr, "slug");
-        // list (json, callback, "props", "channel_platforms", nullptr, "channels");
-
-
-
-        // request next paths
-        /*enqueue (L"/timeline/pc", platform);
-        enqueue (L"/timeline/xbox", platform);
-        enqueue (L"/timeline/server", platform);
-        enqueue (L"/timeline/holographic", platform);
-        enqueue (L"/timeline/team", platform);
-        enqueue (L"/timeline/azure", platform);
-        enqueue (L"/timeline/sdk", platform);
-        enqueue (L"/timeline/iso", platform);
-        // */
-    }
-
-    bool check () {
-        if (InterlockedCompareExchange (&checking, 1u, 0u) == 0u) {
-            if (submit (L"/timeline", timeline))
-                return true;
-        }
-        return false;
-    }
-
-    bool empty (JsonValue o) {
-        for (auto i : o) {
+            return true;
+        } else
             return false;
-        }
-        return true;
     }
 
-
-    bool display (const tie & stack, const wchar_t * format, ...) {
-        va_list args;
-        va_start (args, format);
-
-        stack.display ();
-
-        wchar_t buffer [1024];
-        DWORD length = wvsprintf (buffer, format, args);
-
-        DWORD written;
-        WriteConsole (GetStdHandle (STD_OUTPUT_HANDLE), buffer, length, &written, NULL);
-
-        va_end (args);
-        return false;
+    template <typename Callback>
+    void process (JsonValue json, Callback callback) {
+        callback (json);
     }
 
-    void display (JsonValue o, const tie & stack) {
-        switch (o.getTag ()) {
-            case JSON_NUMBER:
-                display (stack, L"= %f\n", o.toNumber ());
-                break;
-            case JSON_STRING:
-                display (stack, L"= \"%hs\"\n", o.toString ());
-                break;
+    template <typename Callback, typename... Args>
+    void process (JsonValue json, Callback callback, std::nullptr_t, Args &&... remaining) {
+        switch (json.getTag ()) {
             case JSON_ARRAY:
-                if (!empty (o)) {
-                    auto n = 0u;
-                    for (auto i : o) {
-                        display (i->value, { &stack, nullptr, n++ });
-                    }
-                }
-                break;
             case JSON_OBJECT:
-                if (!empty (o)) {
-                    auto n = 0u;
-                    for (auto i : o) {
-                        display (i->value, { &stack, i->key, n++ });
-                    }
+                for (auto i : json) {
+                    process (i->value, callback, remaining...);
                 }
-                break;
-            case JSON_TRUE:
-                display (stack, L"= true\n");
-                break;
-            case JSON_FALSE:
-                display (stack, L"= false\n");
-                break;
-            case JSON_NULL:
-                display (stack, L"= null\n");
-                break;
         }
     }
+
+    template <typename Callback, typename... Args>
+    void process (JsonValue json, Callback callback, const char * text, Args &&... remaining) {
+        switch (json.getTag ()) {
+            case JSON_OBJECT:
+                for (auto i : json) {
+                    if (std::strcmp (i->key, text) == 0) {
+                        process (i->value, callback, remaining...);
+                    }
+                }
+        }
+    }
+
+    enum class Update : int {
+        None = 0,
+        Release,
+        Build,
+        New
+    };
 
     // Data: simply array
     //  - list view groups: PC, Xbox, Server, Holo, Team, Azure, SDK
@@ -713,34 +660,316 @@ namespace {
     //     - UBR in channel increased (updates)
     //     - new build number in channel
     //     - new channel added
-    
-    // Registry name: "pc|Canary" or "pc|17763"
-    /*struct RegistryValue {
-        std::uint32_t date;
-        std::uint16_t build;
-        std::uint16_t release; // UBR
-    };*/
-    // When set alert: "sdk|23***" or "PC" (means all new)
 
-    // Mapping slugs to texts
+    struct BuildData {
+        std::uint32_t date;
+        std::uint32_t build;
+        std::uint32_t release; // UBR
+    };
+    struct BuildInfo : BuildData {
+        const char * platform = nullptr;  // PC, XBox, Server, ...
+        const char * channel = nullptr;   // Canary, Dev, Unstable, ...
+        const char * name = nullptr;      // 21H2
+    };
+
+    struct Report {
+        /*struct {
+            char name [32];
+            struct {
+                char name [32];
+
+
+            } channels [16u];
+        } platform [MAX_PLATFORMS];*/
+
+        std::size_t tempi = 0;
+        wchar_t temp [8192];
+
+        void append (const wchar_t * format, ...) {
+            va_list args;
+            va_start (args, format);
+            this->tempi += wvsprintf (this->temp + this->tempi, format, args);
+            va_end (args);
+        }// */
+
+        void insert (Update level, const BuildInfo & info) {
+            if (tempi) {
+                this->append (L"\n");
+            }
+            this->append (L"\x272E %hs (%hs) %hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
+
+
+            // "New channel: PC Canary xxx yyy"
+            // "New PC Canary build 23456.1001"
+            // "New PC Beta update 22624.1680"
+            // "New PC 22H2 update 22624.1680"
+            // 
+            // "New PC: 21H2 22621.1680, 22H2 22624.1680, ..."
+
+            // místo "New" symbol
+            // update \x2191
+            // \x2206 - delta
+            // \x25B2 - black delta
+
+        }
+        bool toast () {
+            // auto changes = 1; // TODO: count
+
+            // TODO: update tray icon and nid.szTip?
+
+            if (tempi) {
+                nid.dwState = 0;
+                nid.dwStateMask = NIS_HIDDEN;
+                Shell_NotifyIcon (NIM_MODIFY, &nid);
+
+                if (GetSettingsValue (L"toast")) {
+
+                    nid.uFlags |= NIF_INFO;
+                    nid.dwInfoFlags = 0;
+                    nid.uTimeout = 60'000;
+
+                    if (IsWindows7OrGreater ()) {
+                        nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+                    }
+
+                    std::wcsncpy (nid.szInfoTitle, L"PC, XBox, Azure, SDK, ISO, ...", array_size (nid.szInfoTitle));
+                    std::wcsncpy (nid.szInfo, temp, array_size (nid.szInfo));
+
+                    Shell_NotifyIcon (NIM_MODIFY, &nid);
+                } else {
+                    // set signalling icon, play sound and set nid.szTip?
+                }
+            }
+
+            /*
+                // 8.1 celý tip
+                // 1507 cca 164 chars
+                // 1607 cca 176 chars v balonu a 215 v seznamu
+                // 2021 cca 205 chars v balonu a 215 v seznamu
+                // Win 11 cca 219 chars v balonu a 200 v seznamu
+
+                // // místo "New" symbol \xE113 (star) or \xE115 (sprocket) or \E154 (windows)
+                std::wcsncpy (nid.szInfo, L"\x272E \xE113 \xEA8A \xE115 \xE154 \x2665 \x2661 \x2026 \x2116" // 17 chars
+                              " 9 0 20 x3 4 5 6 7 8 9 0 302 3 4 5 6 7 8 9 0 402 3 4 5 6 7 8 9 0 502 3 4 5 6 7 8 9 0 602 3 4 5 6 7 8 9a 0 702 3 4 5 6 7 8b 9 0" // 126 chars
+                              " 802 3 4 5 6 7c 8 9 0 902 3 4 5 6d 7 8 9 0 100 3 4 5e 6 7 8 9 0 110 3 4f 5 6. 7 8 9 0 1 2 3g 4 5 6 7 8 9 0 1 2h..",
+                              256);
+                std::wcsncpy (nid.szInfoTitle, L"\x272E \xE113 \xEA8A \xE115 \xE154 \x2665 \x2661 \x2026 \x2116 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 X.", 64);
+            */
+
+            // and reset
+
+            std::memset (this, 0, sizeof * this);
+            return true;
+        }
+    } report;
+
+    void toast () {
+        report.toast ();
+    }
+
+    std::uint32_t timestamp_to_date (const char * timestamp) {
+        char date [9] = {};
+        date [0] = timestamp [0];
+        date [1] = timestamp [1];
+        date [2] = timestamp [2];
+        date [3] = timestamp [3];
+        date [4] = timestamp [5];
+        date [5] = timestamp [6];
+        date [6] = timestamp [8];
+        date [7] = timestamp [9];
+        date [8] = '\0';
+
+        return (std::uint32_t) std::strtoul (date, nullptr, 10);
+    }
+
+    std::uint32_t release_from_flight (const char * flight) {
+        if (auto release = std::strchr (flight, '.')) {
+            ++release;
+            return (std::uint32_t) std::strtoul (release, nullptr, 10);
+        } else
+            return 0;
+    }
+
+    bool UpdateBuild (const wchar_t * key, const BuildInfo & info, bool report) {
+        Update updated = Update::None;
+
+        // read stored value
+
+        BuildData data = {};
+        DWORD size = sizeof data;
+        if (RegQueryValueEx (builds, key, NULL, NULL, reinterpret_cast <BYTE *> (&data), &size) == ERROR_SUCCESS) {
+
+            // compare
+            if (data.build < info.build) {
+                data = (BuildData) info;
+                updated = Update::Build;
+            } else
+            if (data.build == info.build) {
+                if (data.release < info.release) {
+                    data = (BuildData) info;
+                    updated = Update::Release;
+                }
+            }
+        } else {
+            data = (BuildData) info;
+            updated = Update::New;
+        }
+
+        // update in registry
+
+        if (updated != Update::None) {
+            RegSetValueEx (builds, key, NULL, REG_BINARY, reinterpret_cast <BYTE *> (&data), sizeof data);
+            Print (L"UPDATE(%d) %s %u.%u\n", (int) updated, key, info.build, info.release);
+
+            if (!installed && report) {
+
+                // compare with alerts
+
+                wchar_t alert [256];
+                auto cchAlert = (DWORD) array_size (alert);
+
+                DWORD i = 0;
+                while (RegEnumValue (alerts, i++, alert, &cchAlert, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+                    cchAlert = (DWORD) array_size (alert);
+
+                    if (Windows::MatchFilename (key, alert)) {
+                        ::report.insert (updated, info);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // UpdateBuilds
+    //  - platform = PC, XBox, Server, ...
+    //  - channel = Canary, Dev, Unstable, ...
+    //  - date = YYYY-MM-DD HH:MM:SS
+    //  - name = 21H2
+    //  - flight = 23456.1001
+    //
+    bool UpdateBuilds (BuildInfo & info) {
+        wchar_t key [256];
+        auto reported = 0u;
+
+        if (!current.tool) {
+            
+            // TODO: when tracking new builds, first compare if there's newer build on just that channel, if so don't report (but SDK?)
+
+            _snwprintf (key, array_size (key), L"%hs;%hs#%u", info.platform, info.channel, info.build); // "PC;Canary#23456" - for tracking UBRs for build
+            reported += UpdateBuild (key, info, !reported);
+
+            _snwprintf (key, array_size (key), L"%hs#%u", info.platform, info.build); // "PC#23456" - for tracking UBRs for build
+            reported += UpdateBuild (key, info, !reported);
+        }
+
+        _snwprintf (key, array_size (key), L"%hs;%hs", info.platform, info.name); // "PC;21H2"
+        reported += UpdateBuild (key, info, !reported);
+
+        _snwprintf (key, array_size (key), L"%hs;%hs", info.platform, info.channel); // "PC;Canary" or "SDK;Unstable"
+        reported += UpdateBuild (key, info, !reported);
+
+        return reported;
+    }
+
+    template <typename... Args>
+    const char * get (JsonValue json, Args &&... args) {
+        const char * value = nullptr;
+        process (json,
+                 [&value] (JsonValue x) {
+                     if (x.getTag () == JSON_STRING) {
+                         value = x.toString ();
+                     }
+                 }, args...);
+        return value;
+    }
+
+    template <typename... Args>
+    double getNumber (JsonValue json, Args &&... args) {
+        double value = 0;
+        process (json,
+                 [&value] (JsonValue x) {
+                     if (x.getTag () == JSON_NUMBER) {
+                         value = x.toNumber ();
+                     }
+                 }, args...);
+        return value;
+    }
+
+    void platform (JsonValue json) {
+        process (json,
+                 [] (JsonValue release) {
+                    auto flight = get (release, "flight"); // "23456.1001"
+
+                    BuildInfo info;
+
+                    info.platform = get (release, "platform", "name"); // "PC";
+                    info.channel = nullptr;
+                    info.name = get (release, "release", "version"); // "21H2";
+
+                    info.date = timestamp_to_date (get (release, "date"));
+                    info.build = (std::uint32_t) std::strtoul (flight, nullptr, 10);
+                    info.release = release_from_flight (flight);
+
+                    process (release,
+                             [&info] (JsonValue channel) {
+                                 if (channel.getTag () == JSON_STRING) {
+                                     info.channel = channel.toString ();
+                                     UpdateBuilds (info);
+                                 }
+                             }, "release_channel", nullptr, "name");
+                 }, "props", "timeline", nullptr, "flights", nullptr, nullptr);
+    }
+
+    void timeline (JsonValue json) {
+        process (json,
+                 [] (JsonValue platform) {
+
+                    auto slug = get (platform, "slug"); // "pc" or "iso"
+                    auto tool = getNumber (platform, "tool"); // 0 or 1
+                    auto legacy = getNumber (platform, "legacy"); // "0 or 1
+
+                    Print (L"%hs %d %d\n", slug, (int) tool, (int) legacy);
+
+                    if (!legacy || GetSettingsValue (L"legacy")) {
+                        arguments args;
+                        args.tool = tool;
+                        args.legacy = legacy;
+
+                        // allocate slug
+
+                        enqueue (slug, ::platform, args);
+                    }
+                 }, "props", "platforms", nullptr);
+    }
+
+    bool check () {
+        bool result = false;
+        if (InterlockedCompareExchange (&checking, 1u, 0u) == 0u) {
+            result = submit (nullptr, timeline);
+        }
+        Print (L"check ()...\n");
+        update ();
+        return result;
+    }
 
     std::size_t received = 0;
-
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
         auto data = static_cast <char *> (data_);
-        // Print (L"InternetHandler @ %p %08X\n", &data, code);
         switch (code) {
 
             case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
             case WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:
-                Print (L"InternetHandler @ %p error %u\n", &data, GetLastError ());
+                SetMetricsValue (L"http error", GetLastError ());
                 break;
 
             case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
                 if (WinHttpReceiveResponse (request, NULL))
                     return;
 
-                Print (L"InternetHandler @ %p request error %u\n", &data, GetLastError ());
+                SetMetricsValue (L"http error", GetLastError ());
                 break;
 
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
@@ -752,12 +981,11 @@ namespace {
                         if (WinHttpQueryDataAvailable (request, NULL))
                             return;
 
-                        //Print (L"InternetHandler @ WINHTTP_QUERY_STATUS_CODE: %u\n", status);
-                        Print (L"InternetHandler @ %p WinHttpQueryDataAvailable error %u\n", &data, GetLastError ());
+                        SetMetricsValue (L"http error", GetLastError ());
                     } else
-                        Print (L"InternetHandler @ %p WINHTTP_QUERY_STATUS_CODE status %u\n", &data, status);
+                        SetMetricsValue (L"http error", status);
                 } else
-                    Print (L"InternetHandler @ %p WinHttpQueryHeaders error %u\n", &data, GetLastError ());
+                    SetMetricsValue (L"http error", GetLastError ());
 
                 break;
 
@@ -775,7 +1003,7 @@ namespace {
         }
 
         WinHttpCloseHandle (request);
-        Print (L"request %p end with %u bytes\n", request, received);
+        UpdateMetricsMaximum (L"http downloaded maximum", received);
 
         if (received) {
 
@@ -823,12 +1051,11 @@ namespace {
                     JsonValue tree;
                     if (jsonParse (json, &end, &tree) == JSON_OK) {
                         ((void (*)(JsonValue)) context) (tree);
-                    } else {
-                        Print (L"request %p JSON error\n", request);
                     }
 
                     // drop bump allocator
 
+                    UpdateMetricsMaximum (L"json allocated maximum", allocated);
                     allocated = 0;
                 } else {
                     Print (L"request %p no end!\n", request);
@@ -836,18 +1063,29 @@ namespace {
             }
 
             received = 0;
-            Sleep (500);
+            Sleep (100);
         }
 
-        if (queued) {
-            queued--;
-            submit (queue [queued].platform, queue [queued].callback);
+        if (queued && (qursor < queued)) {
+            
+            current = queue [qursor].args;
+            submit (queue [qursor].platform, queue [qursor].callback);
+            ++qursor;
 
         } else {
-            // done
+            qursor = 0;
+            queued = 0;
+
             InterlockedDecrement (&checking);
+
+            installed = false;
+
+            schedule ();
             update ();
             trim ();
+            Print (L"check () done\n");
+
+            SetTimer (window, 2, USER_TIMER_MINIMUM, NULL);
         }
     }
 
