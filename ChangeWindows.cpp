@@ -40,14 +40,17 @@ namespace {
     static constexpr auto MAX_PLATFORMS = 16u;
 
     bool installed = false;
+    bool signalled = false;
     auto checking = 0u;
-    char buffer [192 * 1024];
-    char allocator [sizeof buffer / 2];
-    std::size_t allocated = 0;
+    char * http_buffer = nullptr;
+    char * json_allocator = nullptr;
+    DWORD http_commit = 0;
+    DWORD json_commit = 0;
+    DWORD json_used_bytes = 0;
 
-    LRESULT CALLBACK wndproc (HWND, UINT, WPARAM, LPARAM);
+    LRESULT CALLBACK TrayProcedure (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
-        0, wndproc, 0, 0,
+        0, TrayProcedure, 0, 0,
         reinterpret_cast <HINSTANCE> (&__ImageBase),
         NULL, NULL, NULL, NULL, name
     };
@@ -287,10 +290,10 @@ namespace {
         }
     }
 
-    void update ();
-    void about ();
-    bool check ();
-    void trim ();
+    void UpdateTrayIcon ();
+    void AboutDialog ();
+    bool CheckChanges ();
+    void TrimMemoryUsage ();
     void toast ();
 }
 
@@ -299,9 +302,9 @@ int WinMain (HINSTANCE, HINSTANCE, LPSTR, int) {
 #else
 void WinMainCRTStartup () {
 #endif
-    if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
+    /*if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
         AllocConsole ();
-    }
+    }// */
 
     auto command = ParseCommandLine ();
     if (command == SettingCommand) {
@@ -335,6 +338,14 @@ void WinMainCRTStartup () {
         ExitProcess (GetLastError ());
     }
 
+    http_buffer = (char *) VirtualAlloc (NULL, 16 * 1024 * 1024, MEM_RESERVE, PAGE_READWRITE);
+    if (!http_buffer)
+        ExitProcess (GetLastError ());
+
+    json_allocator = (char *) VirtualAlloc (NULL, 16 * 1024 * 1024, MEM_RESERVE, PAGE_READWRITE);
+    if (!json_allocator)
+        ExitProcess (GetLastError ());
+
     if (InitResources () && InitRegistry ()) {
         if (auto atom = RegisterClass (&wndclass)) {
 
@@ -352,7 +363,7 @@ void WinMainCRTStartup () {
                     ChangeWindowMessageFilterEx (window, WM_TaskbarCreated,  MSGFLT_ALLOW, NULL);
 
                     InitInternet ();
-                    check ();
+                    CheckChanges ();
 
                     MSG message;
                     while (GetMessage (&message, NULL, 0, 0) > 0) {
@@ -376,7 +387,7 @@ void WinMainCRTStartup () {
 }
 
 namespace {
-    void update () {
+    void UpdateTrayIcon () {
         _snwprintf (nid.szTip, array_size (nid.szTip), L"%s %u.%u\n...",
                     strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
                     HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
@@ -387,7 +398,10 @@ namespace {
             // add latest versons
         }
 
-        // TODO: use badge to icon (if enabled)
+        if (signalled) {
+            // TODO: use badge on icon (allow disable)
+
+        }
 
         if (nid.hIcon) {
             DestroyIcon (nid.hIcon);
@@ -398,10 +412,9 @@ namespace {
         // nid.szInfo [0] = L'\0';
 
         Shell_NotifyIcon (NIM_MODIFY, &nid);
-        Print (L"Shell_NotifyIcon (update)\n");
     }
 
-    void about () {
+    void AboutDialog () {
         wchar_t caption [256];
         _snwprintf (caption, array_size (caption), L"%s - %s",
                     strings [L"ProductName"], strings [L"ProductVersion"]);
@@ -428,18 +441,17 @@ namespace {
         MessageBoxIndirect (&box);
     }
 
-    bool check ();
+    bool CheckChanges ();
 
-    void schedule () {
+    void ScheduleCheck () {
         auto minutes = GetSettingsValue (L"check", 180);
         if (minutes == 0) {
             minutes = 180;
         }
         SetTimer (window, 1, minutes * 60 * 1000, NULL);
-        Print (L"Check scheduled after %u ms\n", minutes * 60 * 1000);
     }
 
-    void track (HWND hWnd, POINT pt) {
+    void TrackTrayMenu (HWND hWnd, POINT pt) {
         UINT style = TPM_RIGHTBUTTON | TPM_RETURNCMD;
         BOOL align = FALSE;
 
@@ -453,26 +465,28 @@ namespace {
         if (auto command = TrackPopupMenu (menu, style, pt.x, pt.y, 0, hWnd, NULL)) {
             PostMessage (hWnd, WM_COMMAND, command, 0);
             Shell_NotifyIcon (NIM_SETFOCUS, &nid);
-            Print (L"Shell_NotifyIcon (NIM_SETFOCUS)\n");
         }
         PostMessage (hWnd, WM_NULL, 0, 0);
     }
 
-    LRESULT CALLBACK wndproc (HWND hWnd, UINT message,
+    LRESULT CALLBACK TrayProcedure (HWND hWnd, UINT message,
                               WPARAM wParam, LPARAM lParam) {
         switch (message) {
             case WM_CREATE:
                 nid.hWnd = hWnd;
+                nid.uVersion = NOTIFYICON_VERSION_4;
                 Shell_NotifyIcon (NIM_ADD, &nid);
                 Shell_NotifyIcon (NIM_SETVERSION, &nid);
 
-                update ();
+                // RegisterPowerSettingNotification (hWnd, , DEVICE_NOTIFY_WINDOW_HANDLE);
+
+                UpdateTrayIcon ();
                 return 0;
 
             case WM_TIMER:
                 switch (wParam) {
                     case 1:
-                        check ();
+                        CheckChanges ();
                         break;
                     case 2:
                         KillTimer (hWnd, wParam);
@@ -481,24 +495,47 @@ namespace {
                 }
                 break;
 
+            case WM_POWERBROADCAST:
+                switch (wParam) {
+                    case PBT_APMRESUMEAUTOMATIC:
+                        CheckChanges ();
+                }
+                break;
+
             case WM_DPICHANGED:
-                Print (L"WM_DPICHANGED\n");
-                update ();
+                UpdateTrayIcon ();
                 break;
 
             case WM_APP:
                 switch (LOWORD (lParam)) {
+//                    case NIN_BALLOONSHOW:
+//                        Print (L"NIN_BALLOONSHOW %08X %04X\n", wParam, HIWORD (lParam));
+//                        break;
+//                    case NIN_BALLOONHIDE:
+//                        Print (L"NIN_BALLOONHIDE %08X %04X\n", wParam, HIWORD (lParam));
+//                        break;
+//                    case NIN_BALLOONTIMEOUT:
+//                        Print (L"NIN_BALLOONTIMEOUT %08X %04X\n", wParam, HIWORD (lParam));
+//                        break;
+//                    case NIN_POPUPOPEN:
+//                        Print (L"NIN_POPUPOPEN %08X %04X\n", wParam, HIWORD (lParam));
+//                        break;
+//                    case NIN_POPUPCLOSE:
+//                        Print (L"NIN_POPUPCLOSE %08X %04X\n", wParam, HIWORD (lParam));
+//                        break;
+
                     case NIN_BALLOONUSERCLICK:
-                        Print (L"NIN_BALLOONUSERCLICK %08X %04X\n", wParam, HIWORD (lParam));
+                        signalled = false;
                         ShellExecute (hWnd, NULL, L"https://www.changewindows.org", NULL, NULL, SW_SHOWDEFAULT);
                         break;
 
                     case WM_LBUTTONDBLCLK:
-                        wndproc (hWnd, WM_COMMAND, GetMenuDefaultItem (menu, FALSE, 0) & 0xFFFF, 0);
+                        signalled = false;
+                        TrayProcedure (hWnd, WM_COMMAND, GetMenuDefaultItem (menu, FALSE, 0) & 0xFFFF, 0);
                         break;
 
                     case WM_CONTEXTMENU:
-                        track (hWnd, { (short) LOWORD (wParam), (short) HIWORD (wParam) });
+                        TrackTrayMenu (hWnd, { (short) LOWORD (wParam), (short) HIWORD (wParam) });
                 }
                 break;
 
@@ -508,10 +545,10 @@ namespace {
                         // run the program itself, to open config dialog
                         break;
                     case 0x11:
-                        check ();
+                        CheckChanges ();
                         break;
                     case 0x1B:
-                        about ();
+                        AboutDialog ();
                         break;
                     case 0x1A:
                         ShellExecute (hWnd, NULL, L"https://www.changewindows.org", NULL, NULL, SW_SHOWDEFAULT);
@@ -520,7 +557,6 @@ namespace {
                         nid.dwState = NIS_HIDDEN;
                         nid.dwStateMask = NIS_HIDDEN;
                         Shell_NotifyIcon (NIM_MODIFY, &nid);
-                        Print (L"Shell_NotifyIcon (NIS_HIDDEN)\n");
                         break;
                     case 0x1F:
                         PostMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
@@ -551,7 +587,7 @@ namespace {
                             Shell_NotifyIcon (NIM_MODIFY, &nid);
                             break;
                         case CheckCommand:
-                            check ();
+                            CheckChanges ();
                             break;
                         case TerminateCommand:
                             SendMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
@@ -562,7 +598,7 @@ namespace {
                         nid.uVersion = NOTIFYICON_VERSION_4;
                         Shell_NotifyIcon (NIM_ADD, &nid);
                         Shell_NotifyIcon (NIM_SETVERSION, &nid);
-                        update ();
+                        UpdateTrayIcon ();
                         return 0;
                     } else
                         return DefWindowProc (hWnd, message, wParam, lParam);
@@ -575,15 +611,15 @@ namespace {
         bool legacy = false;
     } current;
 
-    auto qursor = 0u;
-    auto queued = 0u;
+    std::uint8_t qursor = 0;
+    std::uint8_t queued = 0;
     struct {
         void (*   callback) (JsonValue) = nullptr;
         char      platform [30] = {};
         arguments args;
     } queue [MAX_PLATFORMS];
 
-    bool submit (const char * suffix, void (*callback)(JsonValue)) {
+    bool SubmitRequest (const char * suffix, void (*callback)(JsonValue)) {
         wchar_t path [48];
         if (suffix) {
             _snwprintf (path, array_size (path), L"/timeline/%hs", suffix);
@@ -604,7 +640,7 @@ namespace {
         return false;
     }
 
-    bool enqueue (const char * path, void (*callback)(JsonValue), const arguments & args) {
+    bool EnqueueRequest (const char * path, void (*callback)(JsonValue), const arguments & args) {
         if (queued < array_size (queue)) {
             queue [queued].callback = callback;
             queue [queued].args = args;
@@ -720,22 +756,26 @@ namespace {
             if (tempi) {
                 nid.dwState = 0;
                 nid.dwStateMask = NIS_HIDDEN;
-                Shell_NotifyIcon (NIM_MODIFY, &nid);
 
                 if (GetSettingsValue (L"toast")) {
 
                     nid.uFlags |= NIF_INFO;
                     nid.dwInfoFlags = 0;
-                    nid.uTimeout = 60'000;
 
                     if (IsWindows7OrGreater ()) {
                         nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
                     }
 
+                    // TODO: title text?
                     std::wcsncpy (nid.szInfoTitle, L"PC, XBox, Azure, SDK, ISO, ...", array_size (nid.szInfoTitle));
                     std::wcsncpy (nid.szInfo, temp, array_size (nid.szInfo));
 
+                    nid.uTimeout = 60'000;
+                    signalled = true;
+
                     Shell_NotifyIcon (NIM_MODIFY, &nid);
+
+                    nid.uFlags &= ~NIF_INFO;
                 } else {
                     // set signalling icon, play sound and set nid.szTip?
                 }
@@ -819,7 +859,7 @@ namespace {
 
         if (updated != Update::None) {
             RegSetValueEx (builds, key, NULL, REG_BINARY, reinterpret_cast <BYTE *> (&data), sizeof data);
-            Print (L"UPDATE(%d) %s %u.%u\n", (int) updated, key, info.build, info.release);
+            // Print (L"UPDATE(%d) %s %u.%u\n", (int) updated, key, info.build, info.release);
 
             if (!installed && report) {
 
@@ -854,16 +894,11 @@ namespace {
         wchar_t key [256];
         auto reported = 0u;
 
-        if (!current.tool) {
-            
-            // TODO: when tracking new builds, first compare if there's newer build on just that channel, if so don't report (but SDK?)
+        _snwprintf (key, array_size (key), L"%hs;%hs#%u", info.platform, info.channel, info.build); // "PC;Canary#23456" - for tracking UBRs for build
+        reported += UpdateBuild (key, info, !reported);
 
-            _snwprintf (key, array_size (key), L"%hs;%hs#%u", info.platform, info.channel, info.build); // "PC;Canary#23456" - for tracking UBRs for build
-            reported += UpdateBuild (key, info, !reported);
-
-            _snwprintf (key, array_size (key), L"%hs#%u", info.platform, info.build); // "PC#23456" - for tracking UBRs for build
-            reported += UpdateBuild (key, info, !reported);
-        }
+        _snwprintf (key, array_size (key), L"%hs#%u", info.platform, info.build); // "PC#23456" - for tracking UBRs for build
+        reported += UpdateBuild (key, info, !reported);
 
         _snwprintf (key, array_size (key), L"%hs;%hs", info.platform, info.name); // "PC;21H2"
         reported += UpdateBuild (key, info, !reported);
@@ -931,8 +966,6 @@ namespace {
                     auto tool = getNumber (platform, "tool"); // 0 or 1
                     auto legacy = getNumber (platform, "legacy"); // "0 or 1
 
-                    Print (L"%hs %d %d\n", slug, (int) tool, (int) legacy);
-
                     if (!legacy || GetSettingsValue (L"legacy")) {
                         arguments args;
                         args.tool = tool;
@@ -940,22 +973,23 @@ namespace {
 
                         // allocate slug
 
-                        enqueue (slug, ::platform, args);
+                        EnqueueRequest (slug, ::platform, args);
                     }
                  }, "props", "platforms", nullptr);
     }
 
-    bool check () {
+    bool CheckChanges () {
         bool result = false;
         if (InterlockedCompareExchange (&checking, 1u, 0u) == 0u) {
-            result = submit (nullptr, timeline);
+            result = SubmitRequest (nullptr, timeline);
         }
-        Print (L"check ()...\n");
-        update ();
+        UpdateTrayIcon ();
         return result;
     }
 
-    std::size_t received = 0;
+    DWORD received = 0;
+    wchar_t statusbuffer [6];
+
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
         auto data = static_cast <char *> (data_);
         switch (code) {
@@ -973,10 +1007,10 @@ namespace {
                 break;
 
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
-                size = sizeof buffer;
-                if (WinHttpQueryHeaders (request, WINHTTP_QUERY_STATUS_CODE, NULL, buffer, &size, WINHTTP_NO_HEADER_INDEX)) {
+                size = sizeof statusbuffer;
+                if (WinHttpQueryHeaders (request, WINHTTP_QUERY_STATUS_CODE, NULL, statusbuffer, &size, WINHTTP_NO_HEADER_INDEX)) {
 
-                    auto status = std::wcstoul (reinterpret_cast <const wchar_t *> (buffer), nullptr, 10);
+                    auto status = std::wcstoul (statusbuffer, nullptr, 10);
                     if (status == 200) {
                         if (WinHttpQueryDataAvailable (request, NULL))
                             return;
@@ -992,12 +1026,19 @@ namespace {
             case WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
                 if (size) {
                     received += size;
-                    buffer [received] = '\0';
+                    http_buffer [received] = '\0';
 
                     [[ fallthrough ]];
 
             case WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
-                    if (WinHttpReadData (request, buffer + received, (DWORD) (sizeof buffer - received - 1), NULL))
+                    if (received + 4096 >= http_commit) {
+                        if (VirtualAlloc (http_buffer, http_commit + 4096, MEM_COMMIT, PAGE_READWRITE)) {
+                            http_commit += 4096;
+                        } else
+                            break;
+                    }
+
+                    if (WinHttpReadData (request, http_buffer + received, (DWORD) (http_commit - received - 1), NULL))
                         return;
                 }
         }
@@ -1008,7 +1049,7 @@ namespace {
         if (received) {
 
             // find json content
-            if (auto json = std::strstr (buffer, "<div id=\"app\" data-page=\"")) {
+            if (auto json = std::strstr (http_buffer, "<div id=\"app\" data-page=\"")) {
                 json += 25;
 
                 auto end = std::strchr (json, '"');
@@ -1037,15 +1078,6 @@ namespace {
                     }
                     *o = '\0';
 
-                    /*wchar_t filename [64];
-                    _snwprintf (filename, 64, L"json %p err.txt", request);
-                    auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
-                    if (h != INVALID_HANDLE_VALUE) {
-                        DWORD red;
-                        WriteFile (h, json, o - json, &red, NULL);
-                        CloseHandle (h);
-                    }// */
-
                     // parse
 
                     JsonValue tree;
@@ -1053,12 +1085,10 @@ namespace {
                         ((void (*)(JsonValue)) context) (tree);
                     }
 
-                    // drop bump allocator
+                    // free bump allocator
 
-                    UpdateMetricsMaximum (L"json allocated maximum", allocated);
-                    allocated = 0;
-                } else {
-                    Print (L"request %p no end!\n", request);
+                    UpdateMetricsMaximum (L"json allocated maximum", json_used_bytes);
+                    json_used_bytes = 0;
                 }
             }
 
@@ -1069,7 +1099,7 @@ namespace {
         if (queued && (qursor < queued)) {
             
             current = queue [qursor].args;
-            submit (queue [qursor].platform, queue [qursor].callback);
+            SubmitRequest (queue [qursor].platform, queue [qursor].callback);
             ++qursor;
 
         } else {
@@ -1080,16 +1110,21 @@ namespace {
 
             installed = false;
 
-            schedule ();
-            update ();
-            trim ();
-            Print (L"check () done\n");
+            ScheduleCheck ();
+            UpdateTrayIcon ();
+            TrimMemoryUsage ();
 
             SetTimer (window, 2, USER_TIMER_MINIMUM, NULL);
         }
     }
 
-    void trim () {
+    void TrimMemoryUsage () {
+        if (VirtualFree (http_buffer, http_commit, MEM_DECOMMIT)) {
+            http_commit = 0;
+        }
+        if (VirtualFree (json_allocator, json_commit, MEM_DECOMMIT)) {
+            json_commit = 0;
+        }
         if (IsWindows8Point1OrGreater ()) {
             HeapSetInformation (NULL, HeapOptimizeResources, NULL, 0);
         }
@@ -1098,10 +1133,13 @@ namespace {
 }
 
 JsonNode * jsonAllocate (std::size_t n) {
-    JsonNode * node = nullptr;
-    if (allocated <= sizeof allocator - n) {
-        node = (JsonNode *) &allocator [allocated];
-        allocated += n;
+    if (json_used_bytes + n + 4096 >= json_commit) {
+        if (VirtualAlloc (json_allocator, json_commit + 4096, MEM_COMMIT, PAGE_READWRITE)) {
+            json_commit += 4096;
+        } else
+            return nullptr;
     }
-    return node;
+
+    json_used_bytes += (DWORD) n;
+    return (JsonNode *) &json_allocator [json_used_bytes - (DWORD) n];
 }
