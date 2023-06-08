@@ -279,15 +279,18 @@ namespace {
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data, DWORD size);
 
     void InitInternet () {
+        wchar_t url [64];
+        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x10, url, (int) array_size (url));
+
         wchar_t agent [128];
-        _snwprintf (agent, array_size (agent), L"%s/%u.%u (https://changewindows.org)",
-                    strings [L"InternalName"], HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
+        _snwprintf (agent, array_size (agent), L"%s/%u.%u (https://%s)",
+                    strings [L"InternalName"], HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS), url);
         
         internet = WinHttpOpen (agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, WINHTTP_NO_PROXY_BYPASS, WINHTTP_FLAG_ASYNC);
         if (internet) {
             WinHttpSetStatusCallback (internet, InternetHandler, WINHTTP_CALLBACK_FLAG_ALL_COMPLETIONS, NULL);
 
-            connection = WinHttpConnect (internet, L"changewindows.org", 443, 0);
+            connection = WinHttpConnect (internet, url, 443, 0);
         }
     }
 
@@ -422,6 +425,9 @@ namespace {
         wchar_t status [128];
         if (checking) {
             LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x21, status, (int) array_size (status));
+
+            // TODO: animate icon
+
         } else
         if (signalled) {
 
@@ -439,8 +445,6 @@ namespace {
             }
 
         } else {
-            // LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x20, status, (int) array_size (status));
-            // _snwprintf (nid.szTip, array_size (nid.szTip), L"%s %s", strings [L"ProductName"], strings [L"FileVersion"]);
             std::wcsncpy (nid.szTip, strings [L"ProductName"], array_size (nid.szTip));
         }
 
@@ -512,6 +516,14 @@ namespace {
         PostMessage (hWnd, WM_NULL, 0, 0);
     }
 
+    void OpenWebsite (HWND hWnd) {
+        wchar_t url [64];
+        std::wcscpy (url, L"https://");
+
+        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x10, url + 8, (int) array_size (url) - 8);
+        ShellExecute (hWnd, NULL, url, NULL, NULL, SW_SHOWDEFAULT);
+    }
+
     LRESULT CALLBACK TrayProcedure (HWND hWnd, UINT message,
                               WPARAM wParam, LPARAM lParam) {
         switch (message) {
@@ -563,7 +575,7 @@ namespace {
 
                     case NIN_BALLOONUSERCLICK:
                         signalled = false;
-                        ShellExecute (hWnd, NULL, L"https://www.changewindows.org", NULL, NULL, SW_SHOWDEFAULT);
+                        OpenWebsite (hWnd);
                         break;
 
                     case WM_LBUTTONDBLCLK:
@@ -588,7 +600,7 @@ namespace {
                         AboutDialog ();
                         break;
                     case 0x1A:
-                        ShellExecute (hWnd, NULL, L"https://www.changewindows.org", NULL, NULL, SW_SHOWDEFAULT);
+                        OpenWebsite (hWnd);
                         break;
                     case 0x1E:
                         nid.dwState = NIS_HIDDEN;

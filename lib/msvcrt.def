@@ -8,6 +8,7 @@ EXPORTS
 	strcmp
 	wcslen
 	wcscmp
+	wcscpy
 	wcsncpy
 	wcstoul
 	_wassert

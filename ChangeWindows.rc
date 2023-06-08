@@ -21,16 +21,18 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 STRINGTABLE
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
-    1   "This program... "
-    2   "...\n\n"
-    3   "Command-line parameters:\n"
-    4   " • hide – starts without tray icon or hides existing one\n"
-    5   " • show – restores tray icon of the running program, if any\n"
-    6   " • check – instructs running instance to check for updates\n"
-    7   " • settings – instructs running instance to open Settings dialog\n"
-    8   " • terminate – closes running instance\n"
+    0x01 "This program... "
+    0x02 "...\n\n"
+    0x03 "Command-line parameters:\n"
+    0x04 " • hide – starts without tray icon or hides existing one\n"
+    0x05 " • show – restores tray icon of the running program, if any\n"
+    0x06 " • check – instructs running instance to check for updates\n"
+    0x07 " • settings – instructs running instance to open Settings dialog\n"
+    0x08 " • terminate – closes running instance\n"
+
+    0x10 "changewindows.org"
 
     // 0x20 "There are no new versions at the moment." // ???
-    0x21 "Checking for new builds and updates…"
+    0x21 L"\xE117 Checking…"
     0x22 L"\xE0CA ERROR"
 }
