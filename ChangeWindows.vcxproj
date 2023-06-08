@@ -152,7 +152,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
@@ -203,7 +203,7 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>.rdata=.text</MergeSections>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
@@ -246,7 +246,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
@@ -287,7 +287,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>
       </EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
@@ -339,7 +339,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>
@@ -396,7 +396,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>winhttp.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;wininet.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>
       </EntryPointSymbol>

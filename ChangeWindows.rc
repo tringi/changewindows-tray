@@ -29,4 +29,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     6   " • check – instructs running instance to check for updates\n"
     7   " • settings – instructs running instance to open Settings dialog\n"
     8   " • terminate – closes running instance\n"
+
+    // 0x20 "There are no new versions at the moment." // ???
+    0x21 "Checking for new builds and updates…"
+    0x22 L"\xE0CA ERROR"
 }

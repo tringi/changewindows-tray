@@ -41,7 +41,8 @@ namespace {
 
     bool installed = false;
     bool signalled = false;
-    auto checking = 0u;
+    bool checking = false;
+    DWORD failure = 0;
     char * http_buffer = nullptr;
     char * json_allocator = nullptr;
     DWORD http_commit = 0;
@@ -294,7 +295,6 @@ namespace {
     void AboutDialog ();
     bool CheckChanges ();
     void TrimMemoryUsage ();
-    void toast ();
 }
 
 #ifndef NDEBUG
@@ -347,6 +347,9 @@ void WinMainCRTStartup () {
         ExitProcess (GetLastError ());
 
     if (InitResources () && InitRegistry ()) {
+        LoadLibrary (L"NTDLL");
+        LoadLibrary (L"WININET");
+
         if (auto atom = RegisterClass (&wndclass)) {
 
             menu = GetSubMenu (LoadMenu (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1)), 0);
@@ -387,30 +390,72 @@ void WinMainCRTStartup () {
 }
 
 namespace {
+    DWORD GetErrorMessage (DWORD code, wchar_t * buffer, DWORD length) {
+        if (auto n = FormatMessage (FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK |
+                                    FORMAT_MESSAGE_FROM_SYSTEM, NULL, code, 0, buffer, length, NULL)) {
+            return n;
+        }
+
+        static const wchar_t * const modules [] = {
+            L"WININET",
+            L"NTDLL" // ???
+        };
+        for (auto i = 0u; i < sizeof modules / sizeof modules [0]; ++i) {
+            if (auto module = GetModuleHandle (modules [i])) {
+                if (auto n = FormatMessage (FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK |
+                                            FORMAT_MESSAGE_FROM_HMODULE, module, code, 0, buffer, length, NULL)) {
+                    return n;
+                }
+            }
+        }
+        return 0;
+    }
+
     void UpdateTrayIcon () {
-        _snwprintf (nid.szTip, array_size (nid.szTip), L"%s %u.%u\n...",
-                    strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
-                    HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS));
 
-        if (checking) {
-            // add "Checking..."
-        } else {
-            // add latest versons
-        }
-
-        if (signalled) {
-            // TODO: use badge on icon (allow disable)
-
-        }
-
+        nid.szTip [0] = L'\0';
         if (nid.hIcon) {
             DestroyIcon (nid.hIcon);
+            nid.hIcon = NULL;
         }
-        nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
-                                       GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
-        nid.uFlags &= ~NIF_INFO;
-        // nid.szInfo [0] = L'\0';
 
+        wchar_t status [128];
+        if (checking) {
+            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x21, status, (int) array_size (status));
+        } else
+        if (signalled) {
+
+            // add latest versons
+            // TODO: use badge on icon (allow disable)
+            status [0] = 0;
+
+        } else
+        if (failure) {
+            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x22, status, (int) array_size (status));
+            auto offset = _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s %u: ",
+                                      strings [L"InternalName"], status, failure);
+            if (offset > 0) {
+                GetErrorMessage (failure, nid.szTip + offset, array_size (nid.szTip) - offset);
+            }
+
+        } else {
+            // LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x20, status, (int) array_size (status));
+            // _snwprintf (nid.szTip, array_size (nid.szTip), L"%s %s", strings [L"ProductName"], strings [L"FileVersion"]);
+            std::wcsncpy (nid.szTip, strings [L"ProductName"], array_size (nid.szTip));
+        }
+
+        if (!nid.szTip [0]) {
+            _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s",
+                        strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
+                        // HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS),
+                        status);
+        }
+
+        if (!nid.hIcon) {
+            nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
+                                           GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
+        }
+        nid.uFlags &= ~NIF_INFO;
         Shell_NotifyIcon (NIM_MODIFY, &nid);
     }
 
@@ -441,10 +486,8 @@ namespace {
         MessageBoxIndirect (&box);
     }
 
-    bool CheckChanges ();
-
     void ScheduleCheck () {
-        auto minutes = GetSettingsValue (L"check", 180);
+        auto minutes = GetSettingsValue (L"check");
         if (minutes == 0) {
             minutes = 180;
         }
@@ -478,8 +521,6 @@ namespace {
                 Shell_NotifyIcon (NIM_ADD, &nid);
                 Shell_NotifyIcon (NIM_SETVERSION, &nid);
 
-                // RegisterPowerSettingNotification (hWnd, , DEVICE_NOTIFY_WINDOW_HANDLE);
-
                 UpdateTrayIcon ();
                 return 0;
 
@@ -487,10 +528,6 @@ namespace {
                 switch (wParam) {
                     case 1:
                         CheckChanges ();
-                        break;
-                    case 2:
-                        KillTimer (hWnd, wParam);
-                        toast ();
                         break;
                 }
                 break;
@@ -625,6 +662,7 @@ namespace {
             _snwprintf (path, array_size (path), L"/timeline/%hs", suffix);
         } else {
             _snwprintf (path, array_size (path), L"/timeline");
+            failure = 0;
         }
 
         if (auto request = WinHttpOpenRequest (connection, NULL, path, NULL,
@@ -635,8 +673,9 @@ namespace {
             }
             WinHttpCloseHandle (request);
         }
-        InterlockedDecrement (&checking);
-        SetMetricsValue (L"http error", GetLastError ()); // store error to report if triggered manually
+        checking = false;
+        failure = GetLastError ();
+        SetMetricsValue (L"http error", failure); // store error to report if triggered manually
         return false;
     }
 
@@ -754,6 +793,8 @@ namespace {
             // TODO: update tray icon and nid.szTip?
 
             if (tempi) {
+                signalled = true;
+
                 nid.dwState = 0;
                 nid.dwStateMask = NIS_HIDDEN;
 
@@ -766,12 +807,11 @@ namespace {
                         nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
                     }
 
-                    // TODO: title text?
-                    std::wcsncpy (nid.szInfoTitle, L"PC, XBox, Azure, SDK, ISO, ...", array_size (nid.szInfoTitle));
+                    // TODO: title text? strings [L"InternalName"]
+                    std::wcsncpy (nid.szInfoTitle, L"ChangeWindows: PC, XBox, SDK, ISO, ...", array_size (nid.szInfoTitle));
                     std::wcsncpy (nid.szInfo, temp, array_size (nid.szInfo));
 
                     nid.uTimeout = 60'000;
-                    signalled = true;
 
                     Shell_NotifyIcon (NIM_MODIFY, &nid);
 
@@ -802,10 +842,6 @@ namespace {
             return true;
         }
     } report;
-
-    void toast () {
-        report.toast ();
-    }
 
     std::uint32_t timestamp_to_date (const char * timestamp) {
         char date [9] = {};
@@ -980,7 +1016,8 @@ namespace {
 
     bool CheckChanges () {
         bool result = false;
-        if (InterlockedCompareExchange (&checking, 1u, 0u) == 0u) {
+        if (!checking) {
+            checking = true;
             result = SubmitRequest (nullptr, timeline);
         }
         UpdateTrayIcon ();
@@ -996,14 +1033,16 @@ namespace {
 
             case WINHTTP_CALLBACK_STATUS_REQUEST_ERROR:
             case WINHTTP_CALLBACK_STATUS_CLOSING_CONNECTION:
-                SetMetricsValue (L"http error", GetLastError ());
+                failure = GetLastError ();
+                SetMetricsValue (L"http error", failure);
                 break;
 
             case WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
                 if (WinHttpReceiveResponse (request, NULL))
                     return;
 
-                SetMetricsValue (L"http error", GetLastError ());
+                failure = GetLastError ();
+                SetMetricsValue (L"http error", failure);
                 break;
 
             case WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
@@ -1015,11 +1054,16 @@ namespace {
                         if (WinHttpQueryDataAvailable (request, NULL))
                             return;
 
-                        SetMetricsValue (L"http error", GetLastError ());
-                    } else
+                        failure = GetLastError ();
+                        SetMetricsValue (L"http error", failure);
+                    } else {
+                        failure = ERROR_WINHTTP_INVALID_SERVER_RESPONSE;
                         SetMetricsValue (L"http error", status);
-                } else
-                    SetMetricsValue (L"http error", GetLastError ());
+                    }
+                } else {
+                    failure = GetLastError ();
+                    SetMetricsValue (L"http error", failure);
+                }
 
                 break;
 
@@ -1034,8 +1078,10 @@ namespace {
                     if (received + 4096 >= http_commit) {
                         if (VirtualAlloc (http_buffer, http_commit + 4096, MEM_COMMIT, PAGE_READWRITE)) {
                             http_commit += 4096;
-                        } else
+                        } else {
+                            failure = GetLastError ();
                             break;
+                        }
                     }
 
                     if (WinHttpReadData (request, http_buffer + received, (DWORD) (http_commit - received - 1), NULL))
@@ -1083,13 +1129,19 @@ namespace {
                     JsonValue tree;
                     if (jsonParse (json, &end, &tree) == JSON_OK) {
                         ((void (*)(JsonValue)) context) (tree);
+                    } else {
+                        failure = ERROR_INVALID_DATA;
                     }
 
                     // free bump allocator
 
                     UpdateMetricsMaximum (L"json allocated maximum", json_used_bytes);
                     json_used_bytes = 0;
+                } else {
+                    failure = ERROR_RECEIVE_PARTIAL;
                 }
+            } else {
+                failure = ERROR_NOT_FOUND;
             }
 
             received = 0;
@@ -1105,16 +1157,13 @@ namespace {
         } else {
             qursor = 0;
             queued = 0;
-
-            InterlockedDecrement (&checking);
-
             installed = false;
+            checking = false;
 
             ScheduleCheck ();
             UpdateTrayIcon ();
             TrimMemoryUsage ();
-
-            SetTimer (window, 2, USER_TIMER_MINIMUM, NULL);
+            report.toast ();
         }
     }
 
@@ -1136,8 +1185,10 @@ JsonNode * jsonAllocate (std::size_t n) {
     if (json_used_bytes + n + 4096 >= json_commit) {
         if (VirtualAlloc (json_allocator, json_commit + 4096, MEM_COMMIT, PAGE_READWRITE)) {
             json_commit += 4096;
-        } else
+        } else {
+            failure = GetLastError ();
             return nullptr;
+        }
     }
 
     json_used_bytes += (DWORD) n;
