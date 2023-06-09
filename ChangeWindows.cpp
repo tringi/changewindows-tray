@@ -45,9 +45,9 @@ namespace {
     DWORD failure = 0;
     char * http_buffer = nullptr;
     char * json_allocator = nullptr;
-    DWORD http_commit = 0;
-    DWORD json_commit = 0;
-    DWORD json_used_bytes = 0;
+    std::size_t http_commit = 0;
+    std::size_t json_commit = 0;
+    std::size_t json_used_bytes = 0;
 
     LRESULT CALLBACK TrayProcedure (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
@@ -341,11 +341,11 @@ void WinMainCRTStartup () {
         ExitProcess (GetLastError ());
     }
 
-    http_buffer = (char *) VirtualAlloc (NULL, 16 * 1024 * 1024, MEM_RESERVE, PAGE_READWRITE);
+    http_buffer = (char *) VirtualAlloc (NULL, 16777216, MEM_RESERVE, PAGE_READWRITE);
     if (!http_buffer)
         ExitProcess (GetLastError ());
 
-    json_allocator = (char *) VirtualAlloc (NULL, 16 * 1024 * 1024, MEM_RESERVE, PAGE_READWRITE);
+    json_allocator = (char *) VirtualAlloc (NULL, 16777216, MEM_RESERVE, PAGE_READWRITE);
     if (!json_allocator)
         ExitProcess (GetLastError ());
 
@@ -393,9 +393,9 @@ void WinMainCRTStartup () {
 }
 
 namespace {
-    DWORD GetErrorMessage (DWORD code, wchar_t * buffer, DWORD length) {
+    DWORD GetErrorMessage (DWORD code, wchar_t * buffer, std::size_t length) {
         if (auto n = FormatMessage (FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK |
-                                    FORMAT_MESSAGE_FROM_SYSTEM, NULL, code, 0, buffer, length, NULL)) {
+                                    FORMAT_MESSAGE_FROM_SYSTEM, NULL, code, 0, buffer, (DWORD) length, NULL)) {
             return n;
         }
 
@@ -406,7 +406,7 @@ namespace {
         for (auto i = 0u; i < sizeof modules / sizeof modules [0]; ++i) {
             if (auto module = GetModuleHandle (modules [i])) {
                 if (auto n = FormatMessage (FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK |
-                                            FORMAT_MESSAGE_FROM_HMODULE, module, code, 0, buffer, length, NULL)) {
+                                            FORMAT_MESSAGE_FROM_HMODULE, module, code, 0, buffer, (DWORD) length, NULL)) {
                     return n;
                 }
             }
@@ -557,22 +557,6 @@ namespace {
 
             case WM_APP:
                 switch (LOWORD (lParam)) {
-//                    case NIN_BALLOONSHOW:
-//                        Print (L"NIN_BALLOONSHOW %08X %04X\n", wParam, HIWORD (lParam));
-//                        break;
-//                    case NIN_BALLOONHIDE:
-//                        Print (L"NIN_BALLOONHIDE %08X %04X\n", wParam, HIWORD (lParam));
-//                        break;
-//                    case NIN_BALLOONTIMEOUT:
-//                        Print (L"NIN_BALLOONTIMEOUT %08X %04X\n", wParam, HIWORD (lParam));
-//                        break;
-//                    case NIN_POPUPOPEN:
-//                        Print (L"NIN_POPUPOPEN %08X %04X\n", wParam, HIWORD (lParam));
-//                        break;
-//                    case NIN_POPUPCLOSE:
-//                        Print (L"NIN_POPUPCLOSE %08X %04X\n", wParam, HIWORD (lParam));
-//                        break;
-
                     case NIN_BALLOONUSERCLICK:
                         signalled = false;
                         OpenWebsite (hWnd);
@@ -1036,7 +1020,7 @@ namespace {
         return result;
     }
 
-    DWORD received = 0;
+    std::size_t received = 0;
     wchar_t statusbuffer [6];
 
     void WINAPI InternetHandler (HINTERNET request, DWORD_PTR context, DWORD code, LPVOID data_, DWORD size) {
@@ -1102,7 +1086,7 @@ namespace {
         }
 
         WinHttpCloseHandle (request);
-        UpdateMetricsMaximum (L"http downloaded maximum", received);
+        UpdateMetricsMaximum (L"http downloaded maximum", (DWORD) received);
 
         if (received) {
 
@@ -1147,7 +1131,7 @@ namespace {
 
                     // free bump allocator
 
-                    UpdateMetricsMaximum (L"json allocated maximum", json_used_bytes);
+                    UpdateMetricsMaximum (L"json allocated maximum", (DWORD) json_used_bytes);
                     json_used_bytes = 0;
                 } else {
                     failure = ERROR_RECEIVE_PARTIAL;
