@@ -357,7 +357,7 @@ void WinMainCRTStartup () {
 
             menu = GetSubMenu (LoadMenu (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1)), 0);
             if (menu) {
-                SetMenuDefaultItem (menu, 0x10, FALSE);
+                SetMenuDefaultItem (menu, 0x1A, FALSE);
 
                 WM_Application = RegisterWindowMessage (name);
                 WM_TaskbarCreated = RegisterWindowMessage (L"TaskbarCreated");

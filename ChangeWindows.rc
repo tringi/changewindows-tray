@@ -7,13 +7,13 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
     POPUP ""
     {
-        MENUITEM "TBD: Dialog", 0x10
-        MENUITEM "Check now", 0x11
+        MENUITEM "&www.changewindows.org", 0x1A
         MENUITEM SEPARATOR
-        MENUITEM "Open &www.changewindows.org…", 0x1A
+        MENUITEM "&Check now", 0x11
+        MENUITEM "Settings…", 0x10, GRAYED
         MENUITEM "&About…", 0x1B
         MENUITEM SEPARATOR
-        MENUITEM "&Hide icon until new notification", 0x1E
+        MENUITEM "&Hide icon until next notification", 0x1E
         MENUITEM "Exi&t", 0x1F
     }
 }
