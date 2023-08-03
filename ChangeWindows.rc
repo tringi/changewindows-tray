@@ -21,8 +21,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 STRINGTABLE
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
-    0x01 "This program... "
-    0x02 "...\n\n"
+    0x01 "Simple and convenient notification of new builds reported by ChangeWindows.org project."
+    0x02 "\n\n"
     0x03 "Command-line parameters:\n"
     0x04 " • hide – starts without tray icon or hides existing one\n"
     0x05 " • show – restores tray icon of the running program, if any\n"

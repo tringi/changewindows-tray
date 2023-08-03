@@ -17,6 +17,7 @@
 
 #pragma warning (disable:6262) // stack usage warning
 #pragma warning (disable:6053) // _snwprintf may not NUL-terminate
+#pragma warning (disable:6250) // calling VirtualFree without release
 #pragma warning (disable:26812) // unscoped enum warning
 
 extern "C" IMAGE_DOS_HEADER __ImageBase;
@@ -42,6 +43,7 @@ namespace {
     bool installed = false;
     bool signalled = false;
     bool checking = false;
+    bool retry = false;
     DWORD failure = 0;
     char * http_buffer = nullptr;
     char * json_allocator = nullptr;
@@ -301,13 +303,15 @@ namespace {
 }
 
 #ifndef NDEBUG
-int WinMain (HINSTANCE, HINSTANCE, LPSTR, int) {
+int wWinMain (HINSTANCE, HINSTANCE, LPSTR, int) {
 #else
 void WinMainCRTStartup () {
 #endif
-    /*if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
-        AllocConsole ();
-    }// */
+    if (IsDebuggerPresent ()) {
+        if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
+            AllocConsole ();
+        }
+    }
 
     auto command = ParseCommandLine ();
     if (command == SettingCommand) {
@@ -446,6 +450,7 @@ namespace {
 
         } else {
             std::wcsncpy (nid.szTip, strings [L"ProductName"], array_size (nid.szTip));
+            // TODO: No new builds or releases
         }
 
         if (!nid.szTip [0]) {
@@ -456,17 +461,68 @@ namespace {
         }
 
         if (!nid.hIcon) {
-            nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
-                                           GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
+            const auto cx = GetSystemMetrics (SM_CXSMICON);
+            const auto cy = GetSystemMetrics (SM_CYSMICON);
+
+            nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
+
+            // colorization test
+
+            /*ICONINFO info;
+            if (GetIconInfo (nid.hIcon, &info)) {
+
+                HDC hScreenDC = GetDC (NULL);
+                HDC hDC = CreateCompatibleDC (hScreenDC);
+                HBITMAP hOldBitmap = (HBITMAP) SelectObject (hDC, info.hbmColor);
+
+                auto data = (COLORREF *) HeapAlloc (GetProcessHeap (), 0, sizeof (COLORREF) * cx * cy);
+                if (data) {
+                    BITMAPINFO bi = { { sizeof (BITMAPINFOHEADER), cx, cy, 1, 32, BI_RGB, 0, 0, 0, 0, 0 }, {{ 0, 0, 0, 0 }} };
+
+                    if (GetDIBits (hDC, info.hbmColor, 0, cy, data, &bi, DIB_RGB_COLORS)) {
+
+                        for (auto i = 0u; i < cx * cy; ++i) {
+                            auto r = GetRValue (data [i]);
+                            auto b = GetBValue (data [i]);
+
+                            data [i] = RGB (b, GetGValue (data [i]), r);
+                        }
+
+                        if (auto hNewBitmap = CreateDIBitmap (hDC, &bi.bmiHeader, CBM_INIT, data, &bi, DIB_RGB_COLORS)) {
+
+                            DeleteObject (info.hbmColor);
+                            info.hbmColor = hNewBitmap;
+                            
+                            if (auto hNewIcon = CreateIconIndirect (&info)) {
+                                DestroyIcon (nid.hIcon);
+                                nid.hIcon = hNewIcon;
+                            }
+                        }
+                    }
+                    HeapFree (GetProcessHeap (), 0, data);
+                }
+
+
+                //CreateIconIndirect (
+
+                SelectObject (hDC, hOldBitmap);
+                DeleteObject (info.hbmColor);
+                DeleteObject (info.hbmMask);
+                DeleteDC (hDC);
+                ReleaseDC (NULL, hScreenDC);
+            }
+            // */
         }
         nid.uFlags &= ~NIF_INFO;
         Shell_NotifyIcon (NIM_MODIFY, &nid);
     }
 
     void AboutDialog () {
-        wchar_t caption [256];
-        _snwprintf (caption, array_size (caption), L"%s - %s",
-                    strings [L"ProductName"], strings [L"ProductVersion"]);
+        // TODO: TaskDialogIndirect, add link and check for updates?
+
+        // wchar_t caption [256];
+        // _snwprintf (caption, array_size (caption), L"%s - %s",
+        //            strings [L"ProductName"], strings [L"ProductVersion"]);
 
         wchar_t text [4096];
         auto n = _snwprintf (text, array_size (text), L"%s %s\n%s\n\n",
@@ -483,7 +539,7 @@ namespace {
         box.hwndOwner = HWND_DESKTOP;
         box.hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
         box.lpszText = text;
-        box.lpszCaption = caption;
+        box.lpszCaption = strings [L"ProductName"]; //caption;
         box.dwStyle = MB_USERICON;
         box.lpszIcon = MAKEINTRESOURCE (1);
         box.dwLanguageId = LANG_USER_DEFAULT;
@@ -541,12 +597,16 @@ namespace {
                     case 1:
                         CheckChanges ();
                         break;
+                    case 2:
+                        UpdateTrayIcon ();
+                        break;
                 }
                 break;
 
             case WM_POWERBROADCAST:
                 switch (wParam) {
                     case PBT_APMRESUMEAUTOMATIC:
+                        retry = true;
                         CheckChanges ();
                 }
                 break;
@@ -670,9 +730,16 @@ namespace {
             WinHttpCloseHandle (request);
         }
         checking = false;
+        KillTimer (window, 2);
+
         failure = GetLastError ();
         SetMetricsValue (L"http error", failure); // store error to report if triggered manually
-        return false;
+
+        if (retry) {
+            retry = false;
+            return CheckChanges ();
+        } else
+            return false;
     }
 
     bool EnqueueRequest (const char * path, void (*callback)(JsonValue), const arguments & args) {
@@ -743,6 +810,30 @@ namespace {
         const char * name = nullptr;      // 21H2
     };
 
+    // TODO:
+    //  - caption: 
+    //     - try generate: "Platform: Channel, Channel, Channel; Platform: Channel, Channel"
+    //        - e.g.: "PC: Dev, Canary, LTSB; ISO: Stable; 
+    //     - if too long, generate: "Platform: # channels"...
+    //     - 
+    //  - rows:
+    //     - if more than 4, append "& # more..." to the last one
+    //     - postupne ohodnocovat reportovane entries podle priority
+    //     - merge same build numbers if possible
+    //        - 25348.1001: PC (Dev)
+    //        - 25348.1001: PC (Dev, Beta)
+    //        - 25348.1001: PC (Dev, Beta, ...)
+    //        - 20349.1787: PC 21H2 (LTSC), Azure 22H2 (Production)
+    //     - alternatively
+    //        - PC 25348.1001 (Dev)
+    //        - PC 25348.1001 (Dev & Beta) - if version numbers are equal
+    //        - PC 25348.1001 (Dev), 22123.1001 (Beta) - if not
+    //        - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
+    //        - 25348.1001: PC (Dev), ISO (Stable)
+    //  - order multiple changes by:
+    //     - user set priority
+    //     - build number highest to lowest
+
     struct Report {
         /*struct {
             char name [32];
@@ -767,21 +858,7 @@ namespace {
             if (tempi) {
                 this->append (L"\n");
             }
-            this->append (L"\x272E %hs (%hs) %hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
-
-
-            // "New channel: PC Canary xxx yyy"
-            // "New PC Canary build 23456.1001"
-            // "New PC Beta update 22624.1680"
-            // "New PC 22H2 update 22624.1680"
-            // 
-            // "New PC: 21H2 22621.1680, 22H2 22624.1680, ..."
-
-            // místo "New" symbol
-            // update \x2191
-            // \x2206 - delta
-            // \x25B2 - black delta
-
+            this->append (L"\x272E %hs (%hs) \t%hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
         }
         bool toast () {
             // auto changes = 1; // TODO: count
@@ -834,7 +911,7 @@ namespace {
 
             // and reset
 
-            std::memset (this, 0, sizeof * this);
+            std::memset (this, 0, sizeof *this);
             return true;
         }
     } report;
@@ -1015,6 +1092,7 @@ namespace {
         if (!checking) {
             checking = true;
             result = SubmitRequest (nullptr, timeline);
+            SetTimer (window, 2, 100, NULL);
         }
         UpdateTrayIcon ();
         return result;
@@ -1154,12 +1232,19 @@ namespace {
             qursor = 0;
             queued = 0;
             installed = false;
+
             checking = false;
+            KillTimer (window, 2);
 
             ScheduleCheck ();
             UpdateTrayIcon ();
             TrimMemoryUsage ();
             report.toast ();
+
+            if (retry) {
+                retry = false;
+                CheckChanges ();
+            }
         }
     }
 
