@@ -302,11 +302,7 @@ namespace {
     void TrimMemoryUsage ();
 }
 
-#ifndef NDEBUG
-int wWinMain (HINSTANCE, HINSTANCE, LPSTR, int) {
-#else
-void WinMainCRTStartup () {
-#endif
+void Main () {
     if (IsDebuggerPresent ()) {
         if (!AttachConsole (ATTACH_PARENT_PROCESS)) {
             AllocConsole ();
@@ -699,18 +695,14 @@ namespace {
         return 0;
     }
 
-    struct arguments {
-        bool tool = false;
-        bool legacy = false;
-    } current;
-
     std::uint8_t qursor = 0;
     std::uint8_t queued = 0;
     struct {
-        void (*   callback) (JsonValue) = nullptr;
-        char      platform [30] = {};
-        arguments args;
-    } queue [MAX_PLATFORMS];
+        void (* callback) (JsonValue) = nullptr;
+        char    platform [30] = {};
+        bool    tool = false;
+        bool    legacy = false;
+    } current, queue [MAX_PLATFORMS];
 
     bool SubmitRequest (const char * suffix, void (*callback)(JsonValue)) {
         wchar_t path [48];
@@ -742,10 +734,11 @@ namespace {
             return false;
     }
 
-    bool EnqueueRequest (const char * path, void (*callback)(JsonValue), const arguments & args) {
+    bool EnqueueRequest (const char * path, void (*callback)(JsonValue), bool tool, bool legacy) {
         if (queued < array_size (queue)) {
             queue [queued].callback = callback;
-            queue [queued].args = args;
+            queue [queued].tool = tool;
+            queue [queued].legacy = legacy;
             std::strncpy (queue [queued].platform, path, sizeof queue [queued].platform);
             ++queued;
             return true;
@@ -1076,13 +1069,8 @@ namespace {
                     auto legacy = getNumber (platform, "legacy"); // "0 or 1
 
                     if (!legacy || GetSettingsValue (L"legacy")) {
-                        arguments args;
-                        args.tool = tool;
-                        args.legacy = legacy;
-
                         // allocate slug
-
-                        EnqueueRequest (slug, ::platform, args);
+                        EnqueueRequest (slug, ::platform, tool, legacy);
                     }
                  }, "props", "platforms", nullptr);
     }
@@ -1198,13 +1186,25 @@ namespace {
                     }
                     *o = '\0';
 
+                    /*wchar_t filename [256];
+                    _snwprintf (filename, 256, L"ChangeWindows-%.*hs.json", sizeof current.platform, current.platform);
+
+                    auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (h != INVALID_HANDLE_VALUE) {
+                        DWORD n;
+                        WriteFile (h, json, o - json, &n, NULL);
+                        CloseHandle (h);
+                    }// */
+
                     // parse
 
                     JsonValue tree;
-                    if (jsonParse (json, &end, &tree) == JSON_OK) {
+                    auto jsonStatus = jsonParse (json, &end, &tree);
+                    if (jsonStatus == JSON_OK) {
                         ((void (*)(JsonValue)) context) (tree);
                     } else {
                         failure = ERROR_INVALID_DATA;
+                        SetMetricsValue (L"json error", jsonStatus);
                     }
 
                     // free bump allocator
@@ -1224,7 +1224,7 @@ namespace {
 
         if (queued && (qursor < queued)) {
             
-            current = queue [qursor].args;
+            current = queue [qursor];
             SubmitRequest (queue [qursor].platform, queue [qursor].callback);
             ++qursor;
 

@@ -174,8 +174,9 @@ int jsonParse(char *s, char **endptr, JsonValue *value) {
                         }
                         break;
                     default:
-                        *endptr = s;
-                        return JSON_BAD_STRING;
+                        break; // workaround for invalid data
+                        // *endptr = s;
+                        // return JSON_BAD_STRING;
                     }
                 } else if ((unsigned int)c < ' ' || c == '\x7F') {
                     *endptr = s;
