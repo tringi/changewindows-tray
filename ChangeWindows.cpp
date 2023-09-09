@@ -1186,15 +1186,17 @@ namespace {
                     }
                     *o = '\0';
 
-                    /*wchar_t filename [256];
-                    _snwprintf (filename, 256, L"ChangeWindows-%.*hs.json", sizeof current.platform, current.platform);
+                    if (GetSettingsValue (L"dump json")) {
+                        wchar_t filename [24 + sizeof current.platform];
+                        _snwprintf (filename, array_size (filename), L"ChangeWindows-%.*hs.json", (unsigned int) sizeof current.platform, current.platform);
 
-                    auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-                    if (h != INVALID_HANDLE_VALUE) {
-                        DWORD n;
-                        WriteFile (h, json, o - json, &n, NULL);
-                        CloseHandle (h);
-                    }// */
+                        auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (h != INVALID_HANDLE_VALUE) {
+                            DWORD n;
+                            WriteFile (h, json, o - json, &n, NULL);
+                            CloseHandle (h);
+                        }
+                    }
 
                     // parse
 
