@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
+#include <cmath>
 
 #include "Windows_Symbol.hpp"
 #include "Windows_MatchFilename.hpp"
@@ -40,9 +41,14 @@ namespace {
 
     static constexpr auto MAX_PLATFORMS = 16u;
 
+    enum Mode {
+        Idle = 0,
+        Failure,
+        Checking,
+        Signalling,
+    } mode;
+
     bool installed = false;
-    bool signalled = false;
-    bool checking = false;
     bool retry = false;
     DWORD failure = 0;
     char * http_buffer = nullptr;
@@ -414,100 +420,201 @@ namespace {
         return 0;
     }
 
-    void UpdateTrayIcon () {
+    class Animator {
+        int         cx = 0;
+        int         cy = 0;
+        ULONGLONG   start = 0;
+        HDC         hScreenDC = NULL;
+        HDC         hDC = NULL;
+        HBITMAP     hOldBitmap = NULL;
+        ICONINFO    iconinfo = {};
+        BITMAPINFO  bitmapinfo = {};
+        struct RGBA {
+            std::uint8_t b;
+            std::uint8_t g;
+            std::uint8_t r;
+            std::uint8_t a;
+        };
+        RGBA *      srcIconData = NULL;
+        RGBA *      newIconData = NULL;
 
+        bool Start (int cx, int cy) {
+            if (GetIconInfo (nid.hIcon, &this->iconinfo)) {
+
+                this->hScreenDC = GetDC (NULL);
+                this->hDC = CreateCompatibleDC (this->hScreenDC);
+                this->hOldBitmap = (HBITMAP) SelectObject (this->hDC, this->iconinfo.hbmColor);
+
+                this->srcIconData = (RGBA *) HeapAlloc (GetProcessHeap (), 0, sizeof (RGBA) * cx * cy);
+                this->newIconData = (RGBA *) HeapAlloc (GetProcessHeap (), 0, sizeof (RGBA) * cx * cy);
+
+                if (this->srcIconData && this->newIconData) {
+                    this->bitmapinfo = { { sizeof (BITMAPINFOHEADER), cx, cy, 1, 32, BI_RGB, 0, 0, 0, 0, 0 }, {{ 0, 0, 0, 0 }} };
+
+                    if (GetDIBits (this->hDC, this->iconinfo.hbmColor, 0, cy, this->srcIconData, &this->bitmapinfo, DIB_RGB_COLORS)) {
+                        this->cx = cx;
+                        this->cy = cy;
+                        return true;
+                    }
+                }
+            }
+            this->Cleanup ();
+            return false;
+        }
+
+        void Cleanup () {
+            if (this->newIconData) HeapFree (GetProcessHeap (), 0, this->newIconData);
+            if (this->srcIconData) HeapFree (GetProcessHeap (), 0, this->srcIconData);
+        
+            if (this->hOldBitmap) SelectObject (this->hDC, this->hOldBitmap);
+            DeleteObject (this->iconinfo.hbmColor);
+            DeleteObject (this->iconinfo.hbmMask);
+            
+            if (this->hDC) DeleteDC (this->hDC);
+            if (this->hScreenDC) ReleaseDC (NULL, this->hScreenDC);
+
+            std::memset (this, 0, sizeof *this);
+        }
+
+        void AddLight (RGBA lclr, float lx, float ly, float ld, float a) { // position, diameter, alpha
+            auto i = 0u;
+            for (auto y = 0; y != this->cy; ++y) {
+                for (auto x = 0; x != this->cx; ++x) {
+                    auto d = sqrtf ((x - lx) * (x - lx) + (y - ly) * (y - ly));
+                    d -= 1.0f;
+                    d /= ld;
+                    if (d < 1.0f) {
+                        d = 1.0f - d;
+                        d *= a;
+
+                        if (d > 0.0f) {
+                            auto c = this->newIconData [i];
+                            c.b = (std::uint8_t) (c.b + ((int) lclr.b - (int) c.b) * d);
+                            c.g = (std::uint8_t) (c.g + ((int) lclr.g - (int) c.g) * d);
+                            c.r = (std::uint8_t) (c.r + ((int) lclr.r - (int) c.r) * d);
+                            this->newIconData [i] = c;
+                        }
+                    }
+                    ++i;
+                }
+            }
+        }
+
+    public:
+        void set (Mode m) {
+            switch (m) {
+                case Idle:
+                    if (mode != Idle) {
+                        mode = Idle;
+                        KillTimer (window, 2);
+                        this->Cleanup ();
+                        UpdateTrayIcon ();
+                    }
+                    break;
+                default:
+                    if (mode == Idle) {
+                        if (this->Start (GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON))) {
+                            SetTimer (window, 2, 50, NULL);
+                        }
+                    }
+                    start = GetTickCount64 ();
+                    mode = m;
+            }
+        }
+        
+        HICON frame () {
+            if (mode != Idle) {
+                std::memcpy (this->newIconData, this->srcIconData, sizeof (COLORREF) * this->cx * this->cy);
+
+                switch (mode) {
+                    case Checking: {
+                        auto t = (GetTickCount64 () - this->start) / 200.0f;
+                        this->AddLight ({ 0xFF, 0xFF, 0xFF },
+                                        this->cx / 2.0f + this->cx / 2.5f * sinf (t),
+                                        this->cy / 2.0f + this->cy / 2.5f * cosf (t),
+                                        this->cx / 1.3f, 1.0f);
+                    } break;
+
+                    case Signalling: {
+                        auto t = (GetTickCount64 () - this->start) / 400.0f;
+                        auto n = 4u; // N unique platforms, max 4
+                        float offsets [] = { 0.3125f, 0.6875f };
+
+                        for (auto i = 0u; i != n; ++i) {
+                            // TODO: use colors and cycle them
+                            this->AddLight ({ 0xFF, 0xFF, 0xFF },
+                                            this->cx * offsets [((i + 1) / 2 + 1) % 2], this->cy * offsets [(i + 1) % 2],
+                                            this->cx / 1.8f, std::sinf (t + i * 3.14159f / 2.0f));
+
+                        }
+                    } break;
+
+                    case Failure:
+                        this->AddLight ({ 0x00, 0x00, 0xFF },
+                                        this->cx * 0.666f, this->cy * 0.666f, this->cx / 1.3f,
+                                        std::abs (std::sinf ((GetTickCount64 () - this->start) / 1500.0f)));
+                        break;
+                }
+
+                if (auto hNewBitmap = CreateDIBitmap (hDC, &this->bitmapinfo.bmiHeader, CBM_INIT, this->newIconData, &this->bitmapinfo, DIB_RGB_COLORS)) {
+
+                    DeleteObject (this->iconinfo.hbmColor);
+                    this->iconinfo.hbmColor = hNewBitmap;
+
+                    if (auto hNewIcon = CreateIconIndirect (&this->iconinfo)) {
+                        return hNewIcon;
+                    }
+                    DeleteObject (hNewBitmap);
+                }
+            }
+
+            // normal case and fallback
+
+            return (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON,
+                                      GetSystemMetrics (SM_CXSMICON), GetSystemMetrics (SM_CYSMICON), LR_DEFAULTCOLOR);
+        }
+
+    } animation;
+
+    void UpdateTrayIcon () {
         nid.szTip [0] = L'\0';
+
+        wchar_t status [128];
+        switch (mode) {
+
+            case Idle:
+                std::wcsncpy (nid.szTip, strings [L"InternalName"], array_size (nid.szTip));
+                break;
+
+            case Checking:
+                LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x21, status, (int) array_size (status));
+                break;
+
+            case Signalling:
+                // report latest versions
+                status [0] = 0;
+                break;
+
+            case Failure:
+                LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x22, status, (int) array_size (status));
+                auto offset = _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s %u: ",
+                                          strings [L"InternalName"], status, failure);
+                if (offset > 0) {
+                    GetErrorMessage (failure, nid.szTip + offset, array_size (nid.szTip) - offset);
+                }
+                break;
+        }
+
+        if (!nid.szTip [0]) {
+            _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s", strings [L"InternalName"], status);
+        }
+
         if (nid.hIcon) {
             DestroyIcon (nid.hIcon);
             nid.hIcon = NULL;
         }
-
-        wchar_t status [128];
-        if (checking) {
-            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x21, status, (int) array_size (status));
-
-            // TODO: animate icon
-
-        } else
-        if (signalled) {
-
-            // add latest versons
-            // TODO: use badge on icon (allow disable)
-            status [0] = 0;
-
-        } else
-        if (failure) {
-            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x22, status, (int) array_size (status));
-            auto offset = _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s %u: ",
-                                      strings [L"InternalName"], status, failure);
-            if (offset > 0) {
-                GetErrorMessage (failure, nid.szTip + offset, array_size (nid.szTip) - offset);
-            }
-
-        } else {
-            std::wcsncpy (nid.szTip, strings [L"ProductName"], array_size (nid.szTip));
-            // TODO: No new builds or releases
-        }
-
-        if (!nid.szTip [0]) {
-            _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s",
-                        strings [L"InternalName"] /*or ProductName, but we have only 128 chars*/,
-                        // HIWORD (version->dwProductVersionMS), LOWORD (version->dwProductVersionMS),
-                        status);
-        }
-
         if (!nid.hIcon) {
-            const auto cx = GetSystemMetrics (SM_CXSMICON);
-            const auto cy = GetSystemMetrics (SM_CYSMICON);
-
-            nid.hIcon = (HICON) LoadImage (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), IMAGE_ICON, cx, cy, LR_DEFAULTCOLOR);
-
-            // colorization test
-
-            /*ICONINFO info;
-            if (GetIconInfo (nid.hIcon, &info)) {
-
-                HDC hScreenDC = GetDC (NULL);
-                HDC hDC = CreateCompatibleDC (hScreenDC);
-                HBITMAP hOldBitmap = (HBITMAP) SelectObject (hDC, info.hbmColor);
-
-                auto data = (COLORREF *) HeapAlloc (GetProcessHeap (), 0, sizeof (COLORREF) * cx * cy);
-                if (data) {
-                    BITMAPINFO bi = { { sizeof (BITMAPINFOHEADER), cx, cy, 1, 32, BI_RGB, 0, 0, 0, 0, 0 }, {{ 0, 0, 0, 0 }} };
-
-                    if (GetDIBits (hDC, info.hbmColor, 0, cy, data, &bi, DIB_RGB_COLORS)) {
-
-                        for (auto i = 0u; i < cx * cy; ++i) {
-                            auto r = GetRValue (data [i]);
-                            auto b = GetBValue (data [i]);
-
-                            data [i] = RGB (b, GetGValue (data [i]), r);
-                        }
-
-                        if (auto hNewBitmap = CreateDIBitmap (hDC, &bi.bmiHeader, CBM_INIT, data, &bi, DIB_RGB_COLORS)) {
-
-                            DeleteObject (info.hbmColor);
-                            info.hbmColor = hNewBitmap;
-                            
-                            if (auto hNewIcon = CreateIconIndirect (&info)) {
-                                DestroyIcon (nid.hIcon);
-                                nid.hIcon = hNewIcon;
-                            }
-                        }
-                    }
-                    HeapFree (GetProcessHeap (), 0, data);
-                }
-
-
-                //CreateIconIndirect (
-
-                SelectObject (hDC, hOldBitmap);
-                DeleteObject (info.hbmColor);
-                DeleteObject (info.hbmMask);
-                DeleteDC (hDC);
-                ReleaseDC (NULL, hScreenDC);
-            }
-            // */
+            nid.hIcon = animation.frame ();
         }
         nid.uFlags &= ~NIF_INFO;
         Shell_NotifyIcon (NIM_MODIFY, &nid);
@@ -614,12 +721,12 @@ namespace {
             case WM_APP:
                 switch (LOWORD (lParam)) {
                     case NIN_BALLOONUSERCLICK:
-                        signalled = false;
+                        animation.set (Idle);
                         OpenWebsite (hWnd);
                         break;
 
                     case WM_LBUTTONDBLCLK:
-                        signalled = false;
+                        animation.set (Idle);
                         TrayProcedure (hWnd, WM_COMMAND, GetMenuDefaultItem (menu, FALSE, 0) & 0xFFFF, 0);
                         break;
 
@@ -721,10 +828,10 @@ namespace {
             }
             WinHttpCloseHandle (request);
         }
-        checking = false;
-        KillTimer (window, 2);
 
         failure = GetLastError ();
+        animation.set (Failure);
+
         SetMetricsValue (L"http error", failure); // store error to report if triggered manually
 
         if (retry) {
@@ -859,7 +966,7 @@ namespace {
             // TODO: update tray icon and nid.szTip?
 
             if (tempi) {
-                signalled = true;
+                animation.set (Signalling);
 
                 nid.dwState = 0;
                 nid.dwStateMask = NIS_HIDDEN;
@@ -1077,10 +1184,11 @@ namespace {
 
     bool CheckChanges () {
         bool result = false;
-        if (!checking) {
-            checking = true;
+        if (mode != Checking) {
             result = SubmitRequest (nullptr, timeline);
-            SetTimer (window, 2, 100, NULL);
+            if (result) {
+                animation.set (Checking);
+            }
         }
         UpdateTrayIcon ();
         return result;
@@ -1193,7 +1301,7 @@ namespace {
                         auto h = CreateFile (filename, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
                         if (h != INVALID_HANDLE_VALUE) {
                             DWORD n;
-                            WriteFile (h, json, o - json, &n, NULL);
+                            WriteFile (h, json, DWORD (o - json), &n, NULL);
                             CloseHandle (h);
                         }
                     }
@@ -1235,11 +1343,12 @@ namespace {
             queued = 0;
             installed = false;
 
-            checking = false;
-            KillTimer (window, 2);
-
             ScheduleCheck ();
-            UpdateTrayIcon ();
+            if (failure) {
+                animation.set (Failure);
+            } else {
+                animation.set (Idle);
+            }
             TrimMemoryUsage ();
             report.toast ();
 

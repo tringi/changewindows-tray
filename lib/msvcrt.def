@@ -1,4 +1,7 @@
 EXPORTS 
+	__libm_sse2_cosf
+	__libm_sse2_sinf
+	_except1
 	_snwprintf
 	strncmp
 	strncpy
@@ -14,3 +17,8 @@ EXPORTS
 	_wassert
 	memset
 	memcpy
+	sinf
+	cosf
+	sqrtf
+	fabs
+	printf
