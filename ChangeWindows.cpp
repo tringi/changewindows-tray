@@ -3,7 +3,9 @@
 #include <ws2ipdef.h>
 #include <winhttp.h>
 #include <shellapi.h>
-#include <commdlg.h>
+#include <commctrl.h>
+#include <uxtheme.h>
+#include <vssym32.h>
 
 #include <VersionHelpers.h>
 
@@ -28,8 +30,10 @@ namespace {
     const wchar_t name [] = L"TRIMCORE.ChangeWindows";
     const VS_FIXEDFILEINFO * version = nullptr;
 
+    HANDLE heap = NULL;
     HMENU menu = NULL;
     HWND window = NULL;
+    HWND setupdlg = NULL;
     UINT WM_Application = WM_NULL;
     UINT WM_TaskbarCreated = WM_NULL;
     HKEY settings = NULL;   // app settings
@@ -38,6 +42,11 @@ namespace {
     HKEY metrics = NULL;    // debug metrics
     HINTERNET internet = NULL;
     HINTERNET connection = NULL;
+
+    const INITCOMMONCONTROLSEX iccEx = {
+        sizeof (INITCOMMONCONTROLSEX),
+        ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES
+    };
 
     static constexpr auto MAX_PLATFORMS = 16u;
 
@@ -57,6 +66,7 @@ namespace {
     std::size_t json_commit = 0;
     std::size_t json_used_bytes = 0;
 
+    INT_PTR CALLBACK SetupProcedure (HWND, UINT, WPARAM, LPARAM);
     LRESULT CALLBACK TrayProcedure (HWND, UINT, WPARAM, LPARAM);
     WNDCLASS wndclass = {
         0, TrayProcedure, 0, 0,
@@ -242,6 +252,7 @@ namespace {
                         SetSettingsValue (L"check", 180); // minutes
                         SetSettingsValue (L"toast", 1); // balloon notifications
                         SetSettingsValue (L"legacy", 0); // report on legacy platforms
+                        SetSettingsValue (L"animate", 1); // animated tray icon
 
                         // do not report first check
                         installed = true;
@@ -316,20 +327,17 @@ void Main () {
     }
 
     auto command = ParseCommandLine ();
-    if (command == SettingCommand) {
-        // settings dialog
-        ExitProcess (ERROR_SUCCESS);
-    }
     if (FirstInstance ()) {
         switch (command) {
             case HideCommand: // start hidden
                 nid.dwState = NIS_HIDDEN;
                 nid.dwStateMask = NIS_HIDDEN;
                 break;
-            case TerminateCommand:
-                ExitProcess (ERROR_INVALID_PARAMETER);
             case ShowCommand:
                 ExitProcess (ERROR_FILE_NOT_FOUND);
+            case SettingCommand:
+            case TerminateCommand:
+                ExitProcess (ERROR_INVALID_PARAMETER);
         }
     } else {
         SetLastError (0);
@@ -347,6 +355,8 @@ void Main () {
         ExitProcess (GetLastError ());
     }
 
+    heap = GetProcessHeap ();
+
     http_buffer = (char *) VirtualAlloc (NULL, 16777216, MEM_RESERVE, PAGE_READWRITE);
     if (!http_buffer)
         ExitProcess (GetLastError ());
@@ -355,7 +365,9 @@ void Main () {
     if (!json_allocator)
         ExitProcess (GetLastError ());
 
-    if (InitResources () && InitRegistry ()) {
+    InitCommonControls ();
+    
+    if (InitCommonControlsEx (&iccEx) && InitResources () && InitRegistry ()) {
         LoadLibrary (L"NTDLL");
         LoadLibrary (L"WININET");
 
@@ -445,8 +457,8 @@ namespace {
                 this->hDC = CreateCompatibleDC (this->hScreenDC);
                 this->hOldBitmap = (HBITMAP) SelectObject (this->hDC, this->iconinfo.hbmColor);
 
-                this->srcIconData = (RGBA *) HeapAlloc (GetProcessHeap (), 0, sizeof (RGBA) * cx * cy);
-                this->newIconData = (RGBA *) HeapAlloc (GetProcessHeap (), 0, sizeof (RGBA) * cx * cy);
+                this->srcIconData = (RGBA *) HeapAlloc (heap, 0, sizeof (RGBA) * cx * cy);
+                this->newIconData = (RGBA *) HeapAlloc (heap, 0, sizeof (RGBA) * cx * cy);
 
                 if (this->srcIconData && this->newIconData) {
                     this->bitmapinfo = { { sizeof (BITMAPINFOHEADER), cx, cy, 1, 32, BI_RGB, 0, 0, 0, 0, 0 }, {{ 0, 0, 0, 0 }} };
@@ -463,8 +475,8 @@ namespace {
         }
 
         void Cleanup () {
-            if (this->newIconData) HeapFree (GetProcessHeap (), 0, this->newIconData);
-            if (this->srcIconData) HeapFree (GetProcessHeap (), 0, this->srcIconData);
+            if (this->newIconData) HeapFree (heap, 0, this->newIconData);
+            if (this->srcIconData) HeapFree (heap, 0, this->srcIconData);
         
             if (this->hOldBitmap) SelectObject (this->hDC, this->hOldBitmap);
             DeleteObject (this->iconinfo.hbmColor);
@@ -485,6 +497,9 @@ namespace {
                     d /= ld;
                     if (d < 1.0f) {
                         d = 1.0f - d;
+                        if (d > 1.0f) {
+                            d = 1.0f;
+                        }
                         d *= a;
 
                         if (d > 0.0f) {
@@ -542,7 +557,7 @@ namespace {
 
                         for (auto i = 0u; i != n; ++i) {
                             // TODO: use colors and cycle them
-                            this->AddLight ({ 0xFF, 0xFF, 0xFF },
+                            this->AddLight ({ 0x3F, 0xFF, 0x3F },
                                             this->cx * offsets [((i + 1) / 2 + 1) % 2], this->cy * offsets [(i + 1) % 2],
                                             this->cx / 1.8f, std::sinf (t + i * 3.14159f / 2.0f));
 
@@ -737,10 +752,15 @@ namespace {
 
             case WM_COMMAND:
                 switch (wParam) {
-                    case 0x10:
-                        // run the program itself, to open config dialog
+                    case 0x1D:
+                        if (setupdlg) {
+                            BringWindowToTop (setupdlg);
+                        } else {
+                            DialogBox (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), hWnd, SetupProcedure);
+                            setupdlg = NULL;
+                        }
                         break;
-                    case 0x11:
+                    case 0x1C:
                         CheckChanges ();
                         break;
                     case 0x1B:
@@ -785,6 +805,9 @@ namespace {
                         case CheckCommand:
                             CheckChanges ();
                             break;
+                        case SettingCommand:
+                            TrayProcedure (hWnd, WM_COMMAND, 0x1D, 0);
+                            break;
                         case TerminateCommand:
                             SendMessage (hWnd, WM_CLOSE, ERROR_SUCCESS, 0);
                     }
@@ -800,6 +823,465 @@ namespace {
                         return DefWindowProc (hWnd, message, wParam, lParam);
         }
         return 0;
+    }
+
+
+    HFONT CreateTitleFont (HWND hWnd, COLORREF * cr) {
+        LOGFONT font;
+        HANDLE hTheme = OpenThemeData (hWnd, L"TEXTSTYLE");
+
+        if (cr) {
+            if (hTheme == NULL
+                || GetThemeColor (hTheme, 1, 1, TMT_TEXTCOLOR, cr) != S_OK) {
+
+                *cr = GetSysColor (COLOR_WINDOWTEXT); // fallback
+            }
+        }
+
+        if (hTheme == NULL
+            || GetThemeFont (hTheme, NULL, TEXT_MAININSTRUCTION, 0, TMT_FONT, &font) != S_OK) {
+
+            // fallback
+            if (GetObject (GetStockObject (DEFAULT_GUI_FONT), sizeof font, &font)) {
+
+                std::wcsncpy (font.lfFaceName, L"Trebuchet MS", LF_FACESIZE);
+                if (font.lfHeight > 0)
+                    font.lfHeight += 5;
+                else
+                    font.lfHeight -= 5;
+            }
+        }
+
+        if (hTheme) {
+            CloseThemeData (hTheme);
+        }
+        return CreateFontIndirect (&font);
+    }
+
+    bool GetDlgItemCoordinates (HWND hWnd, UINT control, RECT * result) {
+        if (auto hCtrl = GetDlgItem (hWnd, control)) {
+            union {
+                RECT r;
+                POINT pt [2];
+            };
+            if (GetWindowRect (hCtrl, &r)) {
+                if (ScreenToClient (hWnd, &pt [0]) && ScreenToClient (hWnd, &pt [1])) {
+                    *result = r;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    bool AppendRsrcString (wchar_t * buffer, std::size_t maximum, UINT id) {
+        const wchar_t * string = nullptr;
+        if (auto length = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), id, (LPWSTR) &string, 0)) {
+
+            auto bufferlen = std::wcslen (buffer);
+            if (bufferlen < maximum) {
+                
+                _snwprintf (buffer + bufferlen, maximum - bufferlen, L"%.*s", (int) length, string);
+            }
+        }
+        return false;
+    }
+
+    enum class Update : int {
+        None = 0,
+        Release,
+        Build,
+        New
+    };
+    struct BuildData {
+        std::uint32_t date;
+        std::uint32_t build;
+        std::uint32_t release; // UBR
+    };
+    struct BuildInfo : BuildData {
+        const char * platform = nullptr;  // PC, XBox, Server, ...
+        const char * channel = nullptr;   // Canary, Dev, Unstable, ...
+        const char * name = nullptr;      // 21H2
+    };
+
+    class Remembered {
+        char platforms [MAX_PLATFORMS][16] = { {} };
+        struct ReleaseAndChannelInfo {
+            std::uint16_t platforms = 0; // MAX_PLATFORMS
+            char          name [14] = {};
+        } channels [64]; // channels and releases mixed together
+
+        void insert_channel (std::size_t p, const char * title) {
+            for (auto & channel : this->channels) {
+                if (channel.name [0] == '\0') { // empty slot
+                    std::strncpy (channel.name, title, sizeof channel.name); // insert
+                    channel.platforms |= (1 << p);
+                    break;
+                } else
+                if (std::strncmp (channel.name, title, sizeof channel.name) == 0) { // exists
+                    channel.platforms |= (1 << p); // add bit
+                    break;
+                }
+            }
+        }
+
+    public:
+        void reset () {
+            std::memset (this->platforms, 0, sizeof this->platforms);
+            std::memset (this->channels, 0, sizeof this->channels);
+        }
+        void insert (const BuildInfo & info) {
+            bool found = false;
+            auto p = 0u;
+            for (; p != MAX_PLATFORMS; ++p) {
+                if (this->platforms [p][0] == '\0') { // empty slot
+                    std::strncpy (this->platforms [p], info.platform, sizeof this->platforms [p]); // insert
+                    found = true;
+                    break;
+                } else
+                if (std::strncmp (this->platforms [p], info.platform, sizeof this->platforms [p]) == 0) { // exists
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                this->insert_channel (p, info.channel); // Canary
+                this->insert_channel (p, info.name); // 21H2
+            }
+        }
+        void fill_platforms (HWND hComboBox) const {
+            SendMessage (hComboBox, CB_RESETCONTENT, 0, 0);
+            SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) L"*");
+            for (auto & p : this->platforms) {
+                if (p [0] == '\0')
+                    break;
+
+                wchar_t text [24] = {};
+                MultiByteToWideChar (CP_UTF8, 0, p, sizeof p, text, 24);
+                SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) text);
+            }
+        }
+        void fill_channels (HWND hComboBox, HWND hPlatform) const {
+            int wlength;
+            wchar_t wplatform [32];
+
+            auto cursel = SendMessage (hPlatform, CB_GETCURSEL, 0, 0);
+            if (cursel != -1) {
+                SendMessage (hPlatform, CB_GETLBTEXT, cursel, (LPARAM) wplatform);
+                wlength = (int) std::wcslen (wplatform);
+            } else {
+                wlength = GetWindowText (hPlatform, wplatform, 32);
+            }
+
+            char platform [16] = {};
+            if (WideCharToMultiByte (CP_UTF8, 0, wplatform, wlength, platform, 16, NULL, NULL)) {
+
+                for (auto p = 0u; p != MAX_PLATFORMS; ++p) {
+                    if (std::strncmp (this->platforms [p], platform, sizeof platforms) == 0) {
+
+                        SendMessage (hComboBox, CB_RESETCONTENT, 0, 0);
+                        SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) L"*");
+
+                        for (auto & channel : this->channels) {
+                            if (channel.platforms & (1 << p)) {
+                                if (channel.name [0] == '\0')
+                                    break;
+
+                                wchar_t text [24] = {};
+                                MultiByteToWideChar (CP_UTF8, 0, channel.name, sizeof channel.name, text, 24);
+                                SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) text);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+    } remembered;
+
+    void UpdateButtons (HWND hwnd) {
+        auto hPlatform = GetDlgItem (hwnd, 201);
+        auto hChannels = GetDlgItem (hwnd, 202);
+        auto hBuilds = GetDlgItem (hwnd, 203);
+
+        if (IsWindowEnabled (GetDlgItem (hwnd, 299))) {
+            SetDlgItemText (hwnd, 210, L"\xE109");
+            SetDlgItemText (hwnd, 211, L"\xE107");
+        } else {
+            SetDlgItemText (hwnd, 210, L"\xE10B");
+            SetDlgItemText (hwnd, 211, L"\xE10E");
+        }
+
+        EnableWindow (GetDlgItem (hwnd, 210),
+                      GetWindowTextLength (hPlatform) || GetWindowTextLength (hChannels) || GetWindowTextLength (hBuilds));
+    }
+
+    HFONT hTitleFont = NULL;
+    COLORREF crTitleColor = 0;
+
+    INT_PTR CALLBACK SetupProcedure (HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+        switch (message) {
+            case WM_INITDIALOG:
+                setupdlg = hwnd;
+                hTitleFont = CreateTitleFont (hwnd, &crTitleColor);
+
+                SendDlgItemMessage (hwnd, 200, WM_SETFONT, (WPARAM) hTitleFont, 0);
+                SendDlgItemMessage (hwnd, 300, WM_SETFONT, (WPARAM) hTitleFont, 0);
+                SendDlgItemMessage (hwnd, 203, CB_ADDSTRING, 0, (LPARAM) L"*");
+
+                // fix buttons
+                for (auto btn = 210; btn != 212; ++btn) {
+                    RECT rBtn;
+                    COMBOBOXINFO cbInfo = { sizeof cbInfo, 0 };
+
+                    if (GetDlgItemCoordinates (hwnd, btn, &rBtn)
+                        && SendDlgItemMessage (hwnd, 201, CB_GETCOMBOBOXINFO, 0, (LPARAM) &cbInfo)) {
+
+                        MoveWindow (GetDlgItem (hwnd, btn), rBtn.left, rBtn.top - 1,
+                                    rBtn.right - rBtn.left + 1, cbInfo.rcButton.bottom + 2 * cbInfo.rcButton.top + 1, TRUE);
+                    }
+                }
+
+                if (HWND hList = GetDlgItem (hwnd, 299)) {
+                    ListView_SetExtendedListViewStyle (hList, LVS_EX_COLUMNSNAPPOINTS | LVS_EX_DOUBLEBUFFER | LVS_EX_FULLROWSELECT | LVS_EX_LABELTIP);
+
+                    wchar_t buffer [128];
+                    std::wcscpy (buffer, strings [L"FileDescription"]);
+                    AppendRsrcString (buffer, array_size (buffer), 0x30);
+                    SetWindowText (hwnd, buffer);
+                    
+                    RECT r;
+                    for (auto c = 0u; c != 3u; ++c) {
+                        GetDlgItemCoordinates (hwnd, 201 + c, &r);
+                        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x40 + c, buffer, (int) array_size (buffer));
+                        LVCOLUMN col = { LVCF_WIDTH | LVCF_TEXT, 0, r.right - r.left + (c ? 8 : 0), buffer, 0, 0, 0, 0 };
+                        ListView_InsertColumn (hList, c, &col);
+                    }
+
+                    DWORD i = 0;
+                    auto cchAlert = (DWORD) array_size (buffer);
+                    while (RegEnumValue (alerts, i++, buffer, &cchAlert, NULL, NULL, NULL, NULL) == ERROR_SUCCESS) {
+                        cchAlert = (DWORD) array_size (buffer);
+
+                        wchar_t * channel = std::wcschr (buffer, L';');
+                        wchar_t * build = nullptr;
+
+                        if (channel) {
+                            build = std::wcschr (channel, L'#');
+                        } else {
+                            build = std::wcschr (buffer, L'#');
+                        }
+                        
+                        if (channel) *channel++ = L'\0';
+                        if (build) *build++ = L'\0';
+
+                        LVITEM lvi = { LVIF_TEXT, MAXINT, 0, 0, 0, buffer, 0, 0, 0, 0, 0, 0 };
+                        auto item = ListView_InsertItem (hList, &lvi);
+                        if (channel) {
+                            ListView_SetItemText (hList, item, 1, channel);
+                        }
+                        if (build) {
+                            ListView_SetItemText (hList, item, 2, build);
+                        }
+                    }
+                }
+
+                SetDlgItemInt (hwnd, 311, GetSettingsValue (L"check", 180), false);
+                CheckDlgButton (hwnd, 320, GetSettingsValue (L"toast"));
+                CheckDlgButton (hwnd, 321, GetSettingsValue (L"animate"));
+                CheckDlgButton (hwnd, 322, GetSettingsValue (L"legacy"));
+
+                remembered.fill_platforms (GetDlgItem (hwnd, 201));
+                UpdateButtons (hwnd);
+                return TRUE;
+
+            case WM_CLOSE:
+                DeleteObject (hTitleFont);
+                break;
+
+            case WM_COMMAND:
+                switch (LOWORD (wParam)) {
+
+                    case IDOK:
+                        SetSettingsValue (L"check", GetDlgItemInt (hwnd, 311, NULL, FALSE));
+                        SetSettingsValue (L"toast", IsDlgButtonChecked (hwnd, 320));
+                        SetSettingsValue (L"legacy", IsDlgButtonChecked (hwnd, 322));
+                        SetSettingsValue (L"animate", IsDlgButtonChecked (hwnd, 321));
+
+                        RegDeleteTree (alerts, NULL);
+
+                        if (auto hList = GetDlgItem (hwnd, 299)) {
+                            auto n = ListView_GetItemCount (hList);
+                            for (int i = 0; i != n; ++i) {
+                                wchar_t buffer [98];
+                                wchar_t platform [32];
+                                wchar_t channel [32];
+                                wchar_t build [32];
+
+                                platform [0] = L'\0';
+                                channel [0] = L'\0';
+                                build [0] = L'\0';
+
+                                ListView_GetItemText (hList, i, 0, platform, (int) array_size (platform));
+                                ListView_GetItemText (hList, i, 1, channel, (int) array_size (channel));
+                                ListView_GetItemText (hList, i, 2, build, (int) array_size (build));
+
+                                _snwprintf (buffer, array_size (buffer), L"%s%s%s%s%s",
+                                            platform,
+                                            channel [0] ? L";" : (build [0] ? L"" : L";*"), channel,
+                                            build [0] ? L"#" : L"", build);
+
+                                RegSetValueEx (alerts, buffer, NULL, REG_NONE, NULL, 0);
+                            }
+                        }
+
+                        EndDialog (hwnd, TRUE);
+                        break;
+
+                    case IDCANCEL:
+                        EndDialog (hwnd, FALSE);
+                        break;
+
+                    case 201:
+                    case 202:
+                    case 203:
+                        switch (HIWORD (wParam)) {
+                            case CBN_SELCHANGE:
+                            case CBN_EDITCHANGE:
+                                if (LOWORD (wParam) == 201) {
+                                    remembered.fill_channels (GetDlgItem (hwnd, 202), GetDlgItem (hwnd, 201));
+                                }
+                                UpdateButtons (hwnd);
+                                break;
+                        }
+                        break;
+
+                    case 210:
+                    case 211:
+                        auto hList = GetDlgItem (hwnd, 299);
+                        bool editing = !IsWindowEnabled (hList);
+
+                        wchar_t text [128];
+                        switch (LOWORD (wParam)) {
+                            case 210: // add/save
+                                GetDlgItemText (hwnd, 201, text, (int) array_size (text));
+
+                                int item;
+                                if (editing) {
+                                    item = ListView_GetNextItem (hList, -1, LVNI_SELECTED | LVNI_ALL);
+                                    ListView_SetItemText (hList, item, 0, text);
+                                } else {
+                                    LVITEM lvi = { LVIF_TEXT, MAXINT, 0, 0, 0, text, 0, 0, 0, 0, 0, 0 };
+                                    item = ListView_InsertItem (hList, &lvi);
+                                }
+                                GetDlgItemText (hwnd, 202, text, (int) array_size (text));
+                                ListView_SetItemText (hList, item, 1, text);
+
+                                GetDlgItemText (hwnd, 203, text, (int) array_size (text));
+                                ListView_SetItemText (hList, item, 2, text);
+
+                                ListView_EnsureVisible (hList, item, false);
+                                break;
+
+                            case 211: // delete/cancel
+                                if (!editing) {
+                                    if (auto n = ListView_GetSelectedCount (GetDlgItem (hwnd, 299))) {
+                                        if (n == 1) {
+                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x32, text, (int) array_size (text));
+                                        } else {
+                                            wchar_t fmt [128];
+                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), (n < 5) ? 0x33 : 0x34, fmt, (int) array_size (fmt));
+                                            _snwprintf (text, array_size (text), fmt, n);
+                                        }
+
+                                        if (MessageBox (hwnd, text, text, MB_ICONWARNING | MB_YESNO) == IDYES) {
+                                            int item;
+                                            while ((item = ListView_GetNextItem (hList, -1, LVNI_SELECTED | LVNI_ALL)) != -1) {
+                                                ListView_DeleteItem (hList, item);
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                        }
+
+                        if (editing) {
+                            EnableWindow (hList, TRUE);
+                            UpdateButtons (hwnd);
+                        }
+                        break;
+                }
+                break;
+
+            case WM_NOTIFY:
+                if (auto nm = reinterpret_cast <NMHDR *> (lParam)) {
+                    switch (nm->idFrom) {
+                        case 299:
+                            switch (nm->code) {
+                                case LVN_GETEMPTYMARKUP:
+                                    reinterpret_cast <NMLVEMPTYMARKUP *> (nm)->dwFlags = EMF_CENTERED;
+                                    LoadString (reinterpret_cast <HMODULE> (&__ImageBase), 0x31,
+                                                reinterpret_cast <NMLVEMPTYMARKUP *> (nm)->szMarkup,
+                                                sizeof (NMLVEMPTYMARKUP::szMarkup) / sizeof (NMLVEMPTYMARKUP::szMarkup [0]));
+                                    SetWindowLongPtr (hwnd, DWLP_MSGRESULT, TRUE);
+                                    return TRUE;
+
+                                case LVN_ITEMCHANGED:
+                                    EnableWindow (GetDlgItem (hwnd, 211), ListView_GetSelectedCount (nm->hwndFrom));
+                                    break;
+
+                                case LVN_ITEMACTIVATE:
+                                    auto item = reinterpret_cast <NMITEMACTIVATE *> (nm)->iItem;
+                                    for (auto c = 0u; c != 3u; ++c) {
+                                        wchar_t text [32];
+                                        ListView_GetItemText (nm->hwndFrom, item, c, text, (int) array_size (text));
+                                        SetDlgItemText (hwnd, 201 + c, text);
+                                    }
+                                    EnableWindow (nm->hwndFrom, FALSE);
+                                    UpdateButtons (hwnd);
+                                    break;
+                            }
+                            break;
+                    }
+                }
+                break;
+
+            case WM_CTLCOLORBTN:
+            case WM_CTLCOLORSTATIC: {
+                int id = GetDlgCtrlID ((HWND) lParam);
+                if (id > 128 || id == -1) {
+                    switch (id) {
+                        case 200:
+                        case 300:
+                            SetTextColor ((HDC) wParam, crTitleColor);
+                            break;
+                        default:
+                            SetTextColor ((HDC) wParam, GetSysColor (COLOR_WINDOWTEXT));
+                    }
+                    SetBkColor ((HDC) wParam, GetSysColor (COLOR_WINDOW));
+                    return (INT_PTR) GetSysColorBrush (COLOR_WINDOW);
+                } else
+                    return FALSE;
+            } break;
+
+            case WM_PAINT: {
+                RECT rLimiter;
+                if (GetDlgItemCoordinates (hwnd, 127, &rLimiter)) {
+
+                    PAINTSTRUCT ps;
+                    if (BeginPaint (hwnd, &ps)) {
+
+                        if (ps.rcPaint.bottom > rLimiter.top)
+                            ps.rcPaint.bottom = rLimiter.top;
+
+                        FillRect (ps.hdc, &ps.rcPaint, GetSysColorBrush (COLOR_WINDOW));
+                        EndPaint (hwnd, &ps);
+                    }
+                }
+            } break;
+        }
+        return FALSE;
     }
 
     std::uint8_t qursor = 0;
@@ -818,6 +1300,7 @@ namespace {
         } else {
             _snwprintf (path, array_size (path), L"/timeline");
             failure = 0;
+            remembered.reset ();
         }
 
         if (auto request = WinHttpOpenRequest (connection, NULL, path, NULL,
@@ -881,34 +1364,6 @@ namespace {
         }
     }
 
-    enum class Update : int {
-        None = 0,
-        Release,
-        Build,
-        New
-    };
-
-    // Data: simply array
-    //  - list view groups: PC, Xbox, Server, Holo, Team, Azure, SDK
-    //  - list view items (3 lines):
-    //      Preview     LTSC 2021
-    //      25217.1000  20348.1668
-    //      2022/08/11  2023/04/11
-    //  - report:
-    //     - UBR in channel increased (updates)
-    //     - new build number in channel
-    //     - new channel added
-
-    struct BuildData {
-        std::uint32_t date;
-        std::uint32_t build;
-        std::uint32_t release; // UBR
-    };
-    struct BuildInfo : BuildData {
-        const char * platform = nullptr;  // PC, XBox, Server, ...
-        const char * channel = nullptr;   // Canary, Dev, Unstable, ...
-        const char * name = nullptr;      // 21H2
-    };
 
     // TODO:
     //  - caption: 
@@ -1092,6 +1547,7 @@ namespace {
         return false;
     }
 
+
     // UpdateBuilds
     //  - platform = PC, XBox, Server, ...
     //  - channel = Canary, Dev, Unstable, ...
@@ -1115,6 +1571,7 @@ namespace {
         _snwprintf (key, array_size (key), L"%hs;%hs", info.platform, info.channel); // "PC;Canary" or "SDK;Unstable"
         reported += UpdateBuild (key, info, !reported);
 
+        remembered.insert (info);
         return reported;
     }
 
@@ -1351,6 +1808,10 @@ namespace {
             }
             TrimMemoryUsage ();
             report.toast ();
+
+            if (!failure) {
+                EnableMenuItem (menu, 0x1D, MF_ENABLED);
+            }
 
             if (retry) {
                 retry = false;

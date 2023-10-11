@@ -3,6 +3,7 @@ EXPORTS
 	__libm_sse2_sinf
 	_except1
 	_snwprintf
+	_snprintf
 	strncmp
 	strncpy
 	strtoul
@@ -12,6 +13,7 @@ EXPORTS
 	wcslen
 	wcscmp
 	wcscpy
+	wcschr
 	wcsncpy
 	wcstoul
 	_wassert

@@ -1,4 +1,5 @@
 #include <Windows.h>
+#include <CommCtrl.h>
 
 1 ICON "ChangeWindows.ico"
 
@@ -9,8 +10,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     {
         MENUITEM "&www.changewindows.org", 0x1A
         MENUITEM SEPARATOR
-        MENUITEM "&Check now", 0x11
-        MENUITEM "Settings…", 0x10, GRAYED
+        MENUITEM "&Check now", 0x1C
+        MENUITEM "Settings…", 0x1D, GRAYED
         MENUITEM "&About…", 0x1B
         MENUITEM SEPARATOR
         MENUITEM "&Hide icon until next notification", 0x1E
@@ -28,12 +29,55 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     0x05 " • hide – starts without tray icon or hides existing one\n"
     0x06 " • show – restores tray icon of the running program, if any\n"
     0x07 " • check – instructs running instance to check for updates\n"
-    0x08 " • settings – instructs running instance to open Settings dialog\n"
+    0x08 " • settings – instructs running instance to open Settings\n"
     0x09 " • terminate – closes running instance\n"
 
     0x10 "changewindows.org"
 
     // 0x20 "There are no new versions at the moment." // ???
-    0x21 L"\xE117 Checking…"
-    0x22 L"\xE0CA ERROR"
+    0x21 L"Checking for new builds and releases…" // \xE117 
+    0x22 L"ERROR" // \xE0CA 
+
+    0x30 L" \x2013 Configuration"
+    0x31 "Use drop-down lists to add releases to notify.\r\nUse * and ? wildcards as you please.\r\nLeaving empty means notify everything."
+    0x32 "Delete selected notification?"
+    0x33 "Delete %u selected notifications?" // 2..4
+    0x34 "Delete %u selected notifications?" // 5+
+
+    0x40 "Platform"
+    0x41 "Channel/Release"
+    0x42 "Build number"
+}
+
+1 DIALOGEX 0, 0, 335, 179
+EXSTYLE WS_EX_APPWINDOW
+STYLE DS_SHELLFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_CENTER | DS_NOFAILCREATE
+FONT 9, "Segoe UI"
+CAPTION ""
+LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
+{
+    CONTROL "", 127, "STATIC", SS_ETCHEDHORZ | WS_CHILD | WS_VISIBLE, 0, 152, 337, 2
+
+    CONTROL "&Notify me about:", 200, "STATIC", SS_LEFT | WS_GROUP | WS_CHILD | WS_VISIBLE, 7, 9, 200, 14
+    CONTROL "", 299, WC_LISTVIEW, LVS_REPORT | LVS_SHOWSELALWAYS | WS_VSCROLL | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 7, 23, 202, 110, WS_EX_CLIENTEDGE
+
+    COMBOBOX 201, 7, 136, 57, 100, CBS_DROPDOWN | WS_TABSTOP
+    COMBOBOX 202, 67, 136, 57, 100, CBS_DROPDOWN | WS_TABSTOP | CBS_SORT
+    COMBOBOX 203, 127, 136, 46, 100, CBS_DROPDOWN | WS_TABSTOP
+
+    PUSHBUTTON "", 210, 176, 136, 16, 10, WS_TABSTOP | WS_DISABLED
+    PUSHBUTTON "", 211, 193, 136, 16, 10, WS_TABSTOP | WS_DISABLED
+
+    CONTROL "&Options:", 300, "STATIC", SS_LEFT | WS_GROUP | WS_CHILD | WS_VISIBLE, 220, 9, 100, 14
+
+    CONTROL "Check every", 310, "STATIC", SS_RIGHT | WS_CHILD | WS_VISIBLE, 220, 24, 44, 10
+    CONTROL "", 311, "EDIT", ES_NUMBER | ES_CENTER | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 269, 23, 24, 11, WS_EX_CLIENTEDGE
+    CONTROL "minutes.", 312, "STATIC", WS_CHILD | WS_VISIBLE, 298, 24, 35, 10
+
+    CONTROL "Show toast notification", 320, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 220, 42, 110, 10
+    CONTROL "Animate notification icon", 321, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE | WS_DISABLED, 220, 52, 110, 10
+    CONTROL "Check for legacy platforms", 322, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 220, 62, 110, 10
+
+    CONTROL "&Save", IDOK, "BUTTON", BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 223, 159, 50, 14
+    CONTROL "&Cancel", IDCANCEL, "BUTTON", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 278, 159, 50, 14
 }
