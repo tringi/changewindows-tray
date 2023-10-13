@@ -14,7 +14,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
         MENUITEM "Settings…", 0x1D, GRAYED
         MENUITEM "&About…", 0x1B
         MENUITEM SEPARATOR
-        MENUITEM "&Hide icon until next notification", 0x1E
+        MENUITEM "&Hide icon", 0x1E
         MENUITEM "Exi&t", 0x1F
     }
 }
@@ -22,31 +22,33 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 STRINGTABLE
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
-    0x01 "Simple and convenient notification of new builds reported by ChangeWindows.org project. "
+    0x01 "Simple convenient notification of new Windows builds and releases reported by ChangeWindows.org project."
     0x02 "This is unofficial application, not supported by the project."
-    0x03 "\n\n"
+    0x03 "Click ""Help"" button for Settings help, tips, command-line parameters, and to download latest version."
+    /*0x03 "\n\n"
     0x04 "Command-line parameters:\n"
     0x05 " • hide – starts without tray icon or hides existing one\n"
     0x06 " • show – restores tray icon of the running program, if any\n"
     0x07 " • check – instructs running instance to check for updates\n"
     0x08 " • settings – instructs running instance to open Settings\n"
-    0x09 " • terminate – closes running instance\n"
+    0x09 " • terminate – closes running instance\n"*/
 
-    0x10 "changewindows.org"
+    0x0A "changewindows.org"
+    0x0B "github.com/tringi/changewindows-tray#readme"
 
-    // 0x20 "There are no new versions at the moment." // ???
-    0x21 L"Checking for new builds and releases…" // \xE117 
-    0x22 L"ERROR" // \xE0CA 
+    0x20 "Reporting on new Windows builds and releases."
+    0x21 "ERROR" // \xE0CA 
+    0x22 "Checking on new releases…" // \xE117
+    0x23 "New build(s) and/or release(s) available!\nDouble click for details…"
 
     0x30 L" \x2013 Configuration"
-    0x31 "Use drop-down lists to add releases to notify.\r\nUse * and ? wildcards as you please.\r\nLeaving empty means notify everything."
-    0x32 "Delete selected notification?"
-    0x33 "Delete %u selected notifications?" // 2..4
-    0x34 "Delete %u selected notifications?" // 5+
-
-    0x40 "Platform"
-    0x41 "Channel/Release"
-    0x42 "Build number"
+    0x31 "Platform"
+    0x32 "Channel/Release"
+    0x33 "Build number"
+    0x34 "Use lists below to add notifications.\r\nUse * and ? wildcards as you please.\r\nEmpty to notify about all."
+    0x35 "Delete selected notification?"
+    0x36 "Delete %u selected notifications?" // 2..4
+    0x37 "Delete %u selected notifications?" // 5+
 }
 
 1 DIALOGEX 0, 0, 335, 179
@@ -77,6 +79,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     CONTROL "Show toast notification", 320, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 220, 42, 110, 10
     CONTROL "Animate notification icon", 321, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE | WS_DISABLED, 220, 52, 110, 10
     CONTROL "Check for legacy platforms", 322, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 220, 62, 110, 10
+
+    // CONTROL "&Help <a href=""https://github.com/tringi/changewindows-tray/readme.md"">link</a>", IDHELP, WC_LINK, WS_CHILD | WS_VISIBLE | WS_TABSTOP, 7, 162, 150, 10
 
     CONTROL "&Save", IDOK, "BUTTON", BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 223, 159, 50, 14
     CONTROL "&Cancel", IDCANCEL, "BUTTON", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 278, 159, 50, 14

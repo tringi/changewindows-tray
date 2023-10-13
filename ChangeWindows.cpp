@@ -45,7 +45,7 @@ namespace {
 
     const INITCOMMONCONTROLSEX iccEx = {
         sizeof (INITCOMMONCONTROLSEX),
-        ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES
+        ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS
     };
 
     static constexpr auto MAX_PLATFORMS = 16u;
@@ -299,7 +299,7 @@ namespace {
 
     void InitInternet () {
         wchar_t url [64];
-        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x10, url, (int) array_size (url));
+        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x0A, url, (int) array_size (url));
 
         wchar_t agent [128];
         _snwprintf (agent, array_size (agent), L"%s/%u.%u (https://%s)",
@@ -595,33 +595,23 @@ namespace {
         nid.szTip [0] = L'\0';
 
         wchar_t status [128];
+        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x20 + mode, status, (int) array_size (status));
+
         switch (mode) {
 
             case Idle:
-                std::wcsncpy (nid.szTip, strings [L"InternalName"], array_size (nid.szTip));
-                break;
-
             case Checking:
-                LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x21, status, (int) array_size (status));
-                break;
-
             case Signalling:
-                // report latest versions
-                status [0] = 0;
+                _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s", strings [L"InternalName"], status);
                 break;
 
             case Failure:
-                LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x22, status, (int) array_size (status));
                 auto offset = _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s %u: ",
                                           strings [L"InternalName"], status, failure);
                 if (offset > 0) {
                     GetErrorMessage (failure, nid.szTip + offset, array_size (nid.szTip) - offset);
                 }
                 break;
-        }
-
-        if (!nid.szTip [0]) {
-            _snwprintf (nid.szTip, array_size (nid.szTip), L"%s\n%s", strings [L"InternalName"], status);
         }
 
         if (nid.hIcon) {
@@ -635,19 +625,27 @@ namespace {
         Shell_NotifyIcon (NIM_MODIFY, &nid);
     }
 
+    void OpenWebsite (HWND hWnd, UINT id) {
+        wchar_t url [256];
+        std::wcscpy (url, L"https://");
+
+        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), id, url + 8, (int) array_size (url) - 8);
+        ShellExecute (hWnd, NULL, url, NULL, NULL, SW_SHOWDEFAULT);
+    }
+
+    void CALLBACK AboutHelp (LPHELPINFO) {
+        OpenWebsite (NULL, 0x0B);
+    }
+
     void AboutDialog () {
-        // TODO: TaskDialogIndirect, add link and check for updates?
-
-        // wchar_t caption [256];
-        // _snwprintf (caption, array_size (caption), L"%s - %s",
-        //            strings [L"ProductName"], strings [L"ProductVersion"]);
-
-        wchar_t text [4096];
-        auto n = _snwprintf (text, array_size (text), L"%s %s\n%s\n\n",
+        wchar_t text [1024];
+        auto n = _snwprintf (text, array_size (text) - 2, L"%s %s\n%s",
                              strings [L"FileDescription"], strings [L"ProductVersion"], strings [L"LegalCopyright"]);
         int i = 1;
         int m = 0;
-        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n], (int) (array_size (text) - n))) {
+        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n + 2], (int) (array_size (text) - n - 2))) {
+            text [n + 0] = L'\n';
+            text [n + 1] = L'\n';
             n += m;
             i++;
         }
@@ -657,11 +655,15 @@ namespace {
         box.hwndOwner = HWND_DESKTOP;
         box.hInstance = reinterpret_cast <HINSTANCE> (&__ImageBase);
         box.lpszText = text;
-        box.lpszCaption = strings [L"ProductName"]; //caption;
-        box.dwStyle = MB_USERICON;
+        box.lpszCaption = strings [L"ProductName"];
+        box.dwStyle = MB_USERICON | MB_HELP;
         box.lpszIcon = MAKEINTRESOURCE (1);
         box.dwLanguageId = LANG_USER_DEFAULT;
+        box.dwContextHelpId = 1;
+        box.lpfnMsgBoxCallback = AboutHelp;
         MessageBoxIndirect (&box);
+
+        TrimMemoryUsage ();
     }
 
     void ScheduleCheck () {
@@ -688,14 +690,6 @@ namespace {
             Shell_NotifyIcon (NIM_SETFOCUS, &nid);
         }
         PostMessage (hWnd, WM_NULL, 0, 0);
-    }
-
-    void OpenWebsite (HWND hWnd) {
-        wchar_t url [64];
-        std::wcscpy (url, L"https://");
-
-        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x10, url + 8, (int) array_size (url) - 8);
-        ShellExecute (hWnd, NULL, url, NULL, NULL, SW_SHOWDEFAULT);
     }
 
     LRESULT CALLBACK TrayProcedure (HWND hWnd, UINT message,
@@ -737,7 +731,7 @@ namespace {
                 switch (LOWORD (lParam)) {
                     case NIN_BALLOONUSERCLICK:
                         animation.set (Idle);
-                        OpenWebsite (hWnd);
+                        OpenWebsite (hWnd, 0x0A);
                         break;
 
                     case WM_LBUTTONDBLCLK:
@@ -758,6 +752,7 @@ namespace {
                         } else {
                             DialogBox (reinterpret_cast <HINSTANCE> (&__ImageBase), MAKEINTRESOURCE (1), hWnd, SetupProcedure);
                             setupdlg = NULL;
+                            TrimMemoryUsage ();
                         }
                         break;
                     case 0x1C:
@@ -767,7 +762,7 @@ namespace {
                         AboutDialog ();
                         break;
                     case 0x1A:
-                        OpenWebsite (hWnd);
+                        OpenWebsite (hWnd, 0x0A);
                         break;
                     case 0x1E:
                         nid.dwState = NIS_HIDDEN;
@@ -1054,7 +1049,7 @@ namespace {
                     RECT r;
                     for (auto c = 0u; c != 3u; ++c) {
                         GetDlgItemCoordinates (hwnd, 201 + c, &r);
-                        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x40 + c, buffer, (int) array_size (buffer));
+                        LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x31 + c, buffer, (int) array_size (buffer));
                         LVCOLUMN col = { LVCF_WIDTH | LVCF_TEXT, 0, r.right - r.left + (c ? 8 : 0), buffer, 0, 0, 0, 0 };
                         ListView_InsertColumn (hList, c, &col);
                     }
@@ -1188,10 +1183,10 @@ namespace {
                                 if (!editing) {
                                     if (auto n = ListView_GetSelectedCount (GetDlgItem (hwnd, 299))) {
                                         if (n == 1) {
-                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x32, text, (int) array_size (text));
+                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), 0x35, text, (int) array_size (text));
                                         } else {
                                             wchar_t fmt [128];
-                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), (n < 5) ? 0x33 : 0x34, fmt, (int) array_size (fmt));
+                                            LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), (n < 5) ? 0x36 : 0x37, fmt, (int) array_size (fmt));
                                             _snwprintf (text, array_size (text), fmt, n);
                                         }
 
@@ -1221,7 +1216,7 @@ namespace {
                             switch (nm->code) {
                                 case LVN_GETEMPTYMARKUP:
                                     reinterpret_cast <NMLVEMPTYMARKUP *> (nm)->dwFlags = EMF_CENTERED;
-                                    LoadString (reinterpret_cast <HMODULE> (&__ImageBase), 0x31,
+                                    LoadString (reinterpret_cast <HMODULE> (&__ImageBase), 0x34,
                                                 reinterpret_cast <NMLVEMPTYMARKUP *> (nm)->szMarkup,
                                                 sizeof (NMLVEMPTYMARKUP::szMarkup) / sizeof (NMLVEMPTYMARKUP::szMarkup [0]));
                                     SetWindowLongPtr (hwnd, DWLP_MSGRESULT, TRUE);
@@ -1261,8 +1256,7 @@ namespace {
                     }
                     SetBkColor ((HDC) wParam, GetSysColor (COLOR_WINDOW));
                     return (INT_PTR) GetSysColorBrush (COLOR_WINDOW);
-                } else
-                    return FALSE;
+                }
             } break;
 
             case WM_PAINT: {
@@ -1385,6 +1379,9 @@ namespace {
     //        - PC 25348.1001 (Dev), 22123.1001 (Beta) - if not
     //        - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
     //        - 25348.1001: PC (Dev), ISO (Stable)
+    //     - when many:
+    //        - PC: 10 new builds in 7 channels
+    //          Server: 20348.2031 (LTSC 21H2), 17763.4974 (LTSC) & 14393.6351 (LTSC)
     //  - order multiple changes by:
     //     - user set priority
     //     - build number highest to lowest
@@ -1401,7 +1398,7 @@ namespace {
 
         std::size_t tempi = 0;
         wchar_t temp [8192];
-
+        
         void append (const wchar_t * format, ...) {
             va_list args;
             va_start (args, format);
@@ -1440,13 +1437,12 @@ namespace {
                     std::wcsncpy (nid.szInfo, temp, array_size (nid.szInfo));
 
                     nid.uTimeout = 60'000;
-
-                    Shell_NotifyIcon (NIM_MODIFY, &nid);
-
-                    nid.uFlags &= ~NIF_INFO;
                 } else {
                     // set signalling icon, play sound and set nid.szTip?
                 }
+
+                Shell_NotifyIcon (NIM_MODIFY, &nid);
+                nid.uFlags &= ~NIF_INFO;
             }
 
             /*
