@@ -1,15 +1,19 @@
 # ChangeWindows.org Notification
 
-Unofficial Tray Notification Application for https://changewindows.org project.
+Unofficial Tray Notification Application for https://changewindows.org project.  
 Designed for smallest possible footprint.
 
-## Configuring pre-Alpha version
+## Usage
 
-1. Run `ChangeWindows.exe` and wait for it to download all info (tray icon tooltip stops showing *"Checking..."*).
-2. Open `regedit.exe` and go to: `HKEY_CURRENT_USER\SOFTWARE\TRIM CORE SOFTWARE s.r.o.\ChangeWindows`
-3. Scroll through `builds` to see how builds and updates are named
-4. Go to `alerts` subkey.
-4. Add values (type is irelevant) where name is filename wildcards -style mask for the builds. Those will be reported by alert.
+Download appropriate executable from the *builds* directory and run it.  
+Optionally copy it into your Program Files and make a link in Startup to have it started automatically.
+
+After the initial sync the Settings dialog will be available to configure reporting.
+
+## Manual configuration
+
+`HKEY_CURRENT_USER\SOFTWARE\TRIM CORE SOFTWARE s.r.o.\ChangeWindows\alerts`
+* values' (type is irelevant) name is filename wildcards -style mask for the builds; those will be reported by alert
 
 **Example**
 * `*` - report everything
