@@ -22,8 +22,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 STRINGTABLE
 LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
 {
-    0x01 "Simple convenient notification of new Windows builds and releases reported by ChangeWindows.org project."
-    0x02 "This is unofficial application, not supported by the project."
+    0x01 "Simple convenient notification of new Windows builds and releases reported by ChangeWindows.org project.\n\n"
+    0x02 "This is unofficial application, not supported by the project.\n\n"
     0x03 "Click ""Help"" button for Settings help, tips, command-line parameters, and to download latest version."
     /*0x03 "\n\n"
     0x04 "Command-line parameters:\n"
@@ -80,7 +80,7 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     CONTROL "Animate notification icon", 321, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE | WS_DISABLED, 220, 52, 110, 10
     CONTROL "Check for legacy platforms", 322, "BUTTON", BS_AUTOCHECKBOX | WS_TABSTOP | WS_CHILD | WS_VISIBLE, 220, 62, 110, 10
 
-    // CONTROL "&Help <a href=""https://github.com/tringi/changewindows-tray/readme.md"">link</a>", IDHELP, WC_LINK, WS_CHILD | WS_VISIBLE | WS_TABSTOP, 7, 162, 150, 10
+    CONTROL "<a href="""">&Help</a>", IDHELP, WC_LINK, WS_CHILD | WS_VISIBLE | WS_TABSTOP, 7, 162, 150, 10
 
     CONTROL "&Save", IDOK, "BUTTON", BS_DEFPUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 223, 159, 50, 14
     CONTROL "&Cancel", IDCANCEL, "BUTTON", BS_PUSHBUTTON | WS_CHILD | WS_VISIBLE | WS_TABSTOP, 278, 159, 50, 14

@@ -639,13 +639,11 @@ namespace {
 
     void AboutDialog () {
         wchar_t text [1024];
-        auto n = _snwprintf (text, array_size (text) - 2, L"%s %s\n%s",
+        auto n = _snwprintf (text, array_size (text) - 2, L"%s %s\n%s\n\n",
                              strings [L"FileDescription"], strings [L"ProductVersion"], strings [L"LegalCopyright"]);
         int i = 1;
         int m = 0;
-        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n + 2], (int) (array_size (text) - n - 2))) {
-            text [n + 0] = L'\n';
-            text [n + 1] = L'\n';
+        while (m = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), i, &text [n], (int) (array_size (text) - n))) {
             n += m;
             i++;
         }
@@ -1238,6 +1236,13 @@ namespace {
                                     break;
                             }
                             break;
+                        case IDHELP:
+                            switch (nm->code) {
+                                case NM_CLICK:
+                                case NM_RETURN:
+                                    OpenWebsite (hwnd, 0x0B);
+                            }
+                            break;
                     }
                 }
                 break;
@@ -1551,7 +1556,7 @@ namespace {
     //  - name = 21H2
     //  - flight = 23456.1001
     //
-    bool UpdateBuilds (BuildInfo & info) {
+    bool UpdateBuilds (const BuildInfo & info) {
         wchar_t key [256];
         auto reported = 0u;
 
