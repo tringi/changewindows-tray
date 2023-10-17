@@ -49,6 +49,8 @@ namespace {
     };
 
     static constexpr auto MAX_PLATFORMS = 16u;
+    static constexpr auto MAX_PLATFORM_LENGTH = 30u;
+    static constexpr auto MAX_CHANNEL_LENGTH = 30u;
 
     enum Mode {
         Idle = 0,
@@ -447,8 +449,8 @@ namespace {
             std::uint8_t r;
             std::uint8_t a;
         };
-        RGBA *      srcIconData = NULL;
-        RGBA *      newIconData = NULL;
+        RGBA * srcIconData = NULL;
+        RGBA * newIconData = NULL;
 
         bool Start (int cx, int cy) {
             if (GetIconInfo (nid.hIcon, &this->iconinfo)) {
@@ -477,11 +479,11 @@ namespace {
         void Cleanup () {
             if (this->newIconData) HeapFree (heap, 0, this->newIconData);
             if (this->srcIconData) HeapFree (heap, 0, this->srcIconData);
-        
+
             if (this->hOldBitmap) SelectObject (this->hDC, this->hOldBitmap);
             DeleteObject (this->iconinfo.hbmColor);
             DeleteObject (this->iconinfo.hbmMask);
-            
+
             if (this->hDC) DeleteDC (this->hDC);
             if (this->hScreenDC) ReleaseDC (NULL, this->hScreenDC);
 
@@ -536,7 +538,7 @@ namespace {
                     mode = m;
             }
         }
-        
+
         HICON frame () {
             if (mode != Idle) {
                 std::memcpy (this->newIconData, this->srcIconData, sizeof (COLORREF) * this->cx * this->cy);
@@ -691,7 +693,7 @@ namespace {
     }
 
     LRESULT CALLBACK TrayProcedure (HWND hWnd, UINT message,
-                              WPARAM wParam, LPARAM lParam) {
+                                    WPARAM wParam, LPARAM lParam) {
         switch (message) {
             case WM_CREATE:
                 nid.hWnd = hWnd;
@@ -873,12 +875,38 @@ namespace {
 
             auto bufferlen = std::wcslen (buffer);
             if (bufferlen < maximum) {
-                
+
                 _snwprintf (buffer + bufferlen, maximum - bufferlen, L"%.*s", (int) length, string);
             }
         }
         return false;
     }
+
+    std::size_t strings_match (const char * a, const char * b, std::size_t an, std::size_t bn) {
+        std::size_t n = 0;
+        while (an && bn) {
+            if (a [n] != b [n])
+                return false;
+            if (a [n] == 0)
+                return n + 1;
+
+            --an;
+            --bn;
+            ++n;
+        }
+        if (an && a [n])
+            return false;
+        if (bn && b [n])
+            return false;
+
+        return n + 1;
+    }
+
+    template <std::size_t N, std::size_t M>
+    bool strings_match (const char (&a) [N], const char (&b) [M]) { return strings_match (a, b, N, M); }
+
+    template <std::size_t N>
+    bool strings_match (const char (&a) [N], const char * b) { return strings_match (a, b, N, ~0); }
 
     enum class Update : int {
         None = 0,
@@ -897,11 +925,14 @@ namespace {
         const char * name = nullptr;      // 21H2
     };
 
+    // Remembered
+    //  - platforms/channels temporary memory for Settings dialog
+    //
     class Remembered {
-        char platforms [MAX_PLATFORMS][16] = { {} };
-        struct ReleaseAndChannelInfo {
-            std::uint16_t platforms = 0; // MAX_PLATFORMS
-            char          name [14] = {};
+        char platforms [MAX_PLATFORMS][MAX_PLATFORM_LENGTH] = { {} };
+        struct {
+            std::uint16_t platforms = 0; // MAX_PLATFORMS bits
+            char          name [MAX_CHANNEL_LENGTH] = {};
         } channels [64]; // channels and releases mixed together
 
         void insert_channel (std::size_t p, const char * title) {
@@ -911,7 +942,7 @@ namespace {
                     channel.platforms |= (1 << p);
                     break;
                 } else
-                if (std::strncmp (channel.name, title, sizeof channel.name) == 0) { // exists
+                if (strings_match (channel.name, title)) { // exists
                     channel.platforms |= (1 << p); // add bit
                     break;
                 }
@@ -932,7 +963,7 @@ namespace {
                     found = true;
                     break;
                 } else
-                if (std::strncmp (this->platforms [p], info.platform, sizeof this->platforms [p]) == 0) { // exists
+                if (strings_match (this->platforms [p], info.platform)) { // exists
                     found = true;
                     break;
                 }
@@ -949,28 +980,27 @@ namespace {
                 if (p [0] == '\0')
                     break;
 
-                wchar_t text [24] = {};
-                MultiByteToWideChar (CP_UTF8, 0, p, sizeof p, text, 24);
+                wchar_t text [MAX_PLATFORM_LENGTH + 1] = {};
+                MultiByteToWideChar (CP_UTF8, 0, p, sizeof p, text, (int) array_size (text));
                 SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) text);
             }
         }
         void fill_channels (HWND hComboBox, HWND hPlatform) const {
             int wlength;
-            wchar_t wplatform [32];
+            wchar_t wplatform [MAX_PLATFORM_LENGTH + 1];
 
-            auto cursel = SendMessage (hPlatform, CB_GETCURSEL, 0, 0);
+            auto cursel = (int) SendMessage (hPlatform, CB_GETCURSEL, 0, 0);
             if (cursel != -1) {
-                SendMessage (hPlatform, CB_GETLBTEXT, cursel, (LPARAM) wplatform);
-                wlength = (int) std::wcslen (wplatform);
+                wlength = (int) SendMessage (hPlatform, CB_GETLBTEXT, cursel, (LPARAM) wplatform);
             } else {
-                wlength = GetWindowText (hPlatform, wplatform, 32);
+                wlength = (int) GetWindowText (hPlatform, wplatform, (int) array_size (wplatform));
             }
 
-            char platform [16] = {};
-            if (WideCharToMultiByte (CP_UTF8, 0, wplatform, wlength, platform, 16, NULL, NULL)) {
+            char platform [MAX_PLATFORM_LENGTH + 1] = {};
+            if (WideCharToMultiByte (CP_UTF8, 0, wplatform, wlength, platform, (int) sizeof platform, NULL, NULL)) {
 
                 for (auto p = 0u; p != MAX_PLATFORMS; ++p) {
-                    if (std::strncmp (this->platforms [p], platform, sizeof platforms) == 0) {
+                    if (strings_match (this->platforms [p], platform)) {
 
                         SendMessage (hComboBox, CB_RESETCONTENT, 0, 0);
                         SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) L"*");
@@ -980,8 +1010,8 @@ namespace {
                                 if (channel.name [0] == '\0')
                                     break;
 
-                                wchar_t text [24] = {};
-                                MultiByteToWideChar (CP_UTF8, 0, channel.name, sizeof channel.name, text, 24);
+                                wchar_t text [MAX_CHANNEL_LENGTH] = {};
+                                MultiByteToWideChar (CP_UTF8, 0, channel.name, -1, text, (int) array_size (text));
                                 SendMessage (hComboBox, CB_ADDSTRING, 0, (LPARAM) text);
                             }
                         }
@@ -1107,9 +1137,9 @@ namespace {
                         if (auto hList = GetDlgItem (hwnd, 299)) {
                             auto n = ListView_GetItemCount (hList);
                             for (int i = 0; i != n; ++i) {
-                                wchar_t buffer [98];
-                                wchar_t platform [32];
-                                wchar_t channel [32];
+                                wchar_t buffer [MAX_PLATFORM_LENGTH + MAX_CHANNEL_LENGTH + 36];
+                                wchar_t platform [MAX_PLATFORM_LENGTH + 1];
+                                wchar_t channel [MAX_CHANNEL_LENGTH + 1];
                                 wchar_t build [32];
 
                                 platform [0] = L'\0';
@@ -1287,7 +1317,7 @@ namespace {
     std::uint8_t queued = 0;
     struct {
         void (* callback) (JsonValue) = nullptr;
-        char    platform [30] = {};
+        char    platform [MAX_PLATFORM_LENGTH] = {};
         bool    tool = false;
         bool    legacy = false;
     } current, queue [MAX_PLATFORMS];
@@ -1392,14 +1422,18 @@ namespace {
     //     - build number highest to lowest
 
     struct Report {
-        /*struct {
-            char name [32];
+        bool something = false;
+
+
+
+        struct {
+            char name [MAX_PLATFORM_LENGTH + 1];
             struct {
-                char name [32];
+                char name [MAX_CHANNEL_LENGTH + 1];
 
 
             } channels [16u];
-        } platform [MAX_PLATFORMS];*/
+        } platform [MAX_PLATFORMS];// */
 
         std::size_t tempi = 0;
         wchar_t temp [8192];
@@ -1416,13 +1450,13 @@ namespace {
                 this->append (L"\n");
             }
             this->append (L"\x272E %hs (%hs) \t%hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
+            this->something = true;
         }
+    public:
         bool toast () {
             // auto changes = 1; // TODO: count
 
-            // TODO: update tray icon and nid.szTip?
-
-            if (tempi) {
+            if (this->something) {
                 animation.set (Signalling);
 
                 nid.dwState = 0;
@@ -1557,7 +1591,7 @@ namespace {
     //  - flight = 23456.1001
     //
     bool UpdateBuilds (const BuildInfo & info) {
-        wchar_t key [256];
+        wchar_t key [MAX_PLATFORM_LENGTH + MAX_CHANNEL_LENGTH + 16];
         auto reported = 0u;
 
         _snwprintf (key, array_size (key), L"%hs;%hs#%u", info.platform, info.channel, info.build); // "PC;Canary#23456" - for tracking UBRs for build
@@ -1729,7 +1763,6 @@ namespace {
                 auto end = std::strchr (json, '"');
                 if (end) {
                     *end = '\0';
-                
 
                     // transcode html entities
                     auto p = json;
