@@ -48,9 +48,10 @@ namespace {
         ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES | ICC_LINK_CLASS
     };
 
-    static constexpr auto MAX_PLATFORMS = 16u;
-    static constexpr auto MAX_PLATFORM_LENGTH = 30u;
-    static constexpr auto MAX_CHANNEL_LENGTH = 30u;
+    static constexpr auto MAX_PLATFORMS = 12u;
+    static constexpr auto MAX_PLATFORM_LENGTH = 22u;
+    static constexpr auto MAX_CHANNEL_LENGTH = 22u;
+    static constexpr auto MAX_RELEASE_LENGTH = 22u;
 
     enum Mode {
         Idle = 0,
@@ -60,7 +61,6 @@ namespace {
     } mode;
 
     bool installed = false;
-    bool retry = false;
     DWORD failure = 0;
     char * http_buffer = nullptr;
     char * json_allocator = nullptr;
@@ -135,7 +135,7 @@ namespace {
         }
     } strings;
 
-    void Print (const wchar_t * format, ...) {
+    /*void Print (const wchar_t * format, ...) {
         va_list args;
         va_start (args, format);
 
@@ -206,8 +206,8 @@ namespace {
                 if (size >= sizeof (VS_VERSIONINFO)) {
                     const auto * vi = static_cast <const VS_HEADER *> (data);
                     const auto * vp = static_cast <const unsigned char *> (data)
-                        + sizeof (VS_VERSIONINFO) + sizeof (VS_HEADER) - sizeof (VS_FIXEDFILEINFO)
-                        + vi->wValueLength;
+                                    + sizeof (VS_VERSIONINFO) + sizeof (VS_HEADER) - sizeof (VS_FIXEDFILEINFO)
+                                    + vi->wValueLength;
 
                     if (!std::wcscmp (reinterpret_cast <const wchar_t *> (vp), L"StringFileInfo")) {
                         vp += sizeof (L"StringFileInfo");
@@ -274,10 +274,11 @@ namespace {
     DWORD GetSettingsValue (const wchar_t * name, DWORD default_ = 0) {
         DWORD size = sizeof (DWORD);
         DWORD value = 0;
-        if (RegQueryValueEx (settings, name, NULL, NULL, reinterpret_cast <BYTE *> (&value), &size) == ERROR_SUCCESS)
-            return value;
-        else
-            return default_;
+        if (RegQueryValueEx (settings, name, NULL, NULL, reinterpret_cast <BYTE *> (&value), &size) == ERROR_SUCCESS) {
+            if (value)
+                return value;
+        }
+        return default_;
     }
 
     void SetMetricsValue (const wchar_t * name, DWORD value) {
@@ -367,8 +368,6 @@ void Main () {
     if (!json_allocator)
         ExitProcess (GetLastError ());
 
-    InitCommonControls ();
-    
     if (InitCommonControlsEx (&iccEx) && InitResources () && InitRegistry ()) {
         LoadLibrary (L"NTDLL");
         LoadLibrary (L"WININET");
@@ -667,11 +666,7 @@ namespace {
     }
 
     void ScheduleCheck () {
-        auto minutes = GetSettingsValue (L"check");
-        if (minutes == 0) {
-            minutes = 180;
-        }
-        SetTimer (window, 1, minutes * 60 * 1000, NULL);
+        SetTimer (window, 1, GetSettingsValue (L"check", 180) * 60 * 1000, NULL);
     }
 
     void TrackTrayMenu (HWND hWnd, POINT pt) {
@@ -712,14 +707,18 @@ namespace {
                     case 2:
                         UpdateTrayIcon ();
                         break;
+                    case 3:
+                        CheckChanges ();
+                        KillTimer (hWnd, wParam);
+                        break;
+
                 }
                 break;
 
             case WM_POWERBROADCAST:
                 switch (wParam) {
                     case PBT_APMRESUMEAUTOMATIC:
-                        retry = true;
-                        CheckChanges ();
+                        SetTimer (hWnd, 3, GetSettingsValue (L"retry", 10000), NULL);
                 }
                 break;
 
@@ -1137,10 +1136,10 @@ namespace {
                         if (auto hList = GetDlgItem (hwnd, 299)) {
                             auto n = ListView_GetItemCount (hList);
                             for (int i = 0; i != n; ++i) {
-                                wchar_t buffer [MAX_PLATFORM_LENGTH + MAX_CHANNEL_LENGTH + 36];
+                                wchar_t buffer [MAX_PLATFORM_LENGTH + MAX_CHANNEL_LENGTH + MAX_RELEASE_LENGTH + 4];
                                 wchar_t platform [MAX_PLATFORM_LENGTH + 1];
                                 wchar_t channel [MAX_CHANNEL_LENGTH + 1];
-                                wchar_t build [32];
+                                wchar_t build [MAX_RELEASE_LENGTH + 1];
 
                                 platform [0] = L'\0';
                                 channel [0] = L'\0';
@@ -1345,12 +1344,9 @@ namespace {
         animation.set (Failure);
 
         SetMetricsValue (L"http error", failure); // store error to report if triggered manually
+        SetTimer (window, 3, GetSettingsValue (L"retry", 10000), NULL);
 
-        if (retry) {
-            retry = false;
-            return CheckChanges ();
-        } else
-            return false;
+        return false;
     }
 
     bool EnqueueRequest (const char * path, void (*callback)(JsonValue), bool tool, bool legacy) {
@@ -1393,70 +1389,164 @@ namespace {
         }
     }
 
+    class StringBuilder {
+        wchar_t * const buffer;
+        std::size_t const N;
+        std::size_t size = 0;
 
-    // TODO:
-    //  - caption: 
-    //     - try generate: "Platform: Channel, Channel, Channel; Platform: Channel, Channel"
-    //        - e.g.: "PC: Dev, Canary, LTSB; ISO: Stable; 
-    //     - if too long, generate: "Platform: # channels"...
-    //     - 
-    //  - rows:
-    //     - if more than 4, append "& # more..." to the last one
-    //     - postupne ohodnocovat reportovane entries podle priority
-    //     - merge same build numbers if possible
-    //        - 25348.1001: PC (Dev)
-    //        - 25348.1001: PC (Dev, Beta)
-    //        - 25348.1001: PC (Dev, Beta, ...)
-    //        - 20349.1787: PC 21H2 (LTSC), Azure 22H2 (Production)
-    //     - alternatively
-    //        - PC 25348.1001 (Dev)
-    //        - PC 25348.1001 (Dev & Beta) - if version numbers are equal
-    //        - PC 25348.1001 (Dev), 22123.1001 (Beta) - if not
-    //        - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
-    //        - 25348.1001: PC (Dev), ISO (Stable)
-    //     - when many:
-    //        - PC: 10 new builds in 7 channels
-    //          Server: 20348.2031 (LTSC 21H2), 17763.4974 (LTSC) & 14393.6351 (LTSC)
-    //  - order multiple changes by:
-    //     - user set priority
-    //     - build number highest to lowest
-
-    struct Report {
-        bool something = false;
-
-
-
-        struct {
-            char name [MAX_PLATFORM_LENGTH + 1];
-            struct {
-                char name [MAX_CHANNEL_LENGTH + 1];
-
-
-            } channels [16u];
-        } platform [MAX_PLATFORMS];// */
-
-        std::size_t tempi = 0;
-        wchar_t temp [8192];
-        
-        void append (const wchar_t * format, ...) {
-            va_list args;
-            va_start (args, format);
-            this->tempi += wvsprintf (this->temp + this->tempi, format, args);
-            va_end (args);
-        }// */
-
-        void insert (Update level, const BuildInfo & info) {
-            if (tempi) {
-                this->append (L"\n");
-            }
-            this->append (L"\x272E %hs (%hs) \t%hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
-            this->something = true;
-        }
     public:
-        bool toast () {
-            // auto changes = 1; // TODO: count
+        bool        failed = false;
 
-            if (this->something) {
+        template <std::size_t N>
+        StringBuilder (wchar_t (&buffer) [N])
+            : buffer (buffer)
+            , N (N) {
+        };
+
+        void reset () {
+            this->failed = false;
+            this->size = 0;
+        }
+        bool append (const char * s) {
+            if (!this->failed) {
+                auto n = std::strlen (s);
+                if (this->size + n <= N) {
+                    for (std::size_t i = 0; i != n; ++i) {
+                        this->buffer [this->size++] = wchar_t (*s++);
+                    }
+                    return true;
+                } else
+                    this->failed = true;
+            }
+            return false;
+        }
+        bool append_rsrc (unsigned int id) {
+            if (!this->failed) {
+                const wchar_t * string = nullptr;
+                if (auto length = LoadString (reinterpret_cast <HINSTANCE> (&__ImageBase), id, (LPWSTR) &string, 0)) {
+                    if (this->size + length <= N) {
+                        std::memcpy (this->buffer + this->size, string, length * sizeof (wchar_t));
+                        this->size += length;
+                        return true;
+                    } else {
+                        this->failed = true;
+                    }
+                }
+            }
+            return false;
+        }
+        void append (wchar_t c) {
+            if (!this->failed) {
+                if (this->size < N) {
+                    this->buffer [this->size++] = c;
+                } else {
+                    this->failed = true;
+                }
+            }
+        }
+        void append (unsigned int u) {
+            if (!this->failed) {
+                wchar_t s [12];
+                auto n = _snwprintf (s, 12, L"%u", u);
+                
+                if (this->size + n <= N) {
+                    std::memcpy (this->buffer + this->size, s, n * sizeof (wchar_t));
+                    this->size += n;
+                } else {
+                    this->failed = true;
+                }
+            }
+        }
+        void finish () {
+            if (this->size < N) {
+                this->buffer [this->size] = L'\0';
+            }
+        }
+    };
+
+    // Report
+    //  - collection of builds accumulated to generate nice toast notification
+    //
+    class Report {
+        struct Release {
+            char name [MAX_RELEASE_LENGTH + 1];
+
+            std::uint32_t build;
+            std::uint32_t ubr;
+        };
+        struct Channel {
+            char name [MAX_CHANNEL_LENGTH + 1];
+            std::uint8_t nreleases;
+
+            Release releases [4u];
+        };
+        struct Platform {
+            char name [MAX_PLATFORM_LENGTH + 1];
+            std::uint8_t nchannels;
+
+            Channel channels [8u];
+        };
+        
+        Platform platforms [MAX_PLATFORMS];// */
+
+        std::uint8_t nplatforms = 0;
+
+        Platform * access_platform (const char * name) {
+            for (auto & p : this->platforms) {
+                if (strings_match (p.name, name)) {
+                    return &p;
+                }
+                if (p.name [0] == '\0') {
+                    std::strncpy (p.name, name, sizeof p.name);
+                    ++this->nplatforms;
+                    return &p;
+                }
+            }
+            return nullptr;
+        }
+        Channel * access_channel (Platform * platform, const char * name) {
+            for (auto & ch : platform->channels) {
+                if (strings_match (ch.name, name)) {
+                    return &ch;
+                }
+                if (ch.name [0] == '\0') {
+                    std::strncpy (ch.name, name, sizeof ch.name);
+                    ++platform->nchannels;
+                    return &ch;
+                }
+            }
+            return nullptr;
+        }
+        Release * access_release (Channel * channel, const char * name) {
+            for (auto & r : channel->releases) {
+                if (strings_match (r.name, name)) {
+                    return &r;
+                }
+                if (r.name [0] == '\0') {
+                    std::strncpy (r.name, name, sizeof r.name);
+                    ++channel->nreleases;
+                    return &r;
+                }
+            }
+            return nullptr;
+        }
+
+    public:
+        void insert (Update level, const BuildInfo & info) {
+            if (auto platform = this->access_platform (info.platform)) {
+                if (auto channel = this->access_channel (platform, info.channel)) {
+                    if (auto release = this->access_release (channel, info.name)) {
+                        release->build = info.build;
+                        release->ubr = info.release;
+                    } else {
+                        ++channel->nreleases;
+                    }
+                }
+            }
+        }
+    
+        void toast () {
+            if (this->nplatforms) {
                 animation.set (Signalling);
 
                 nid.dwState = 0;
@@ -1465,46 +1555,141 @@ namespace {
                 if (GetSettingsValue (L"toast")) {
 
                     nid.uFlags |= NIF_INFO;
-                    nid.dwInfoFlags = 0;
+                    nid.dwInfoFlags = NIIF_RESPECT_QUIET_TIME;
 
-                    if (IsWindows7OrGreater ()) {
-                        nid.dwInfoFlags |= NIIF_RESPECT_QUIET_TIME;
+                    // TITLE
+                    //  - 0: "PC (Dev, Canary, LTSB, LTSC); ISO: Stable; XBox (Abc, Def, Ghi, Jkp)"
+                    //  - 1: "PC (Dev, Canary & 2 more); ISO: Stable; XBox (Abc, Def & 2 more)"
+                    //  - 2: "PC (3), ISO (1), XBox (4)"
+                    //  - 3: "PC, ISO, XBox"
+
+                    StringBuilder title (nid.szInfoTitle);
+
+                    auto level = 0u;
+                    for (; level != 4u; ++level) {
+                        title.reset ();
+
+                        bool first_platform = true;
+                        for (const auto & platform : this->platforms) {
+                            if (!platform.name [0])
+                                break;
+
+                            if (!first_platform) {
+                                title.append ((level >= 2) ? L',' : L';');
+                                title.append (L' ');
+                            } else {
+                                first_platform = false;
+                            }
+                             
+                            if (!title.append (platform.name)) {
+                                title.append (L'\x2026');
+                                break;
+                            }
+
+                            switch (level) {
+                                case 2:
+                                    title.append (L' ');
+                                    title.append (L'(');
+                                    title.append ((unsigned int) platform.nchannels);
+                                    title.append (L')');
+                                    break;
+
+                                case 0:
+                                case 1:
+                                    if (platform.nchannels > 1) {
+                                        title.append (L' ');
+                                        title.append (L'(');
+
+                                        auto nchannel = 0;
+                                        for (const auto & channel : platform.channels) {
+                                            if (!channel.name [0])
+                                                break;
+
+                                            if (nchannel) {
+                                                if ((level == 1) && (platform.nchannels > 3) && (nchannel == 2)) {
+                                                    title.append (" & ");
+                                                    title.append (platform.nchannels - 2u);
+                                                    title.append_rsrc (0x2A);
+                                                    break;
+                                                } else {
+                                                    title.append (L',');
+                                                    title.append (L' ');
+                                                }
+                                            }
+                                            title.append (channel.name);
+                                            ++nchannel;
+                                        }
+                                        title.append (L')');
+                                    } else {
+                                        title.append (L':');
+                                        title.append (L' ');
+                                        title.append (platform.channels [0].name);
+                                    }
+                            }
+                        }
+
+                        if (!title.failed)
+                            break;
                     }
 
-                    // TODO: title text? strings [L"InternalName"]
-                    std::wcsncpy (nid.szInfoTitle, L"ChangeWindows: PC, XBox, SDK, ISO, ...", array_size (nid.szInfoTitle));
-                    std::wcsncpy (nid.szInfo, temp, array_size (nid.szInfo));
+                    // CONTENT
+                    //  - we have 4 rows available
+                    //  - rows:
+                    //     - if more than 4, append "& # more..." to the last one
+                    //     - postupne ohodnocovat reportovane entries podle priority
+                    //     - merge same build numbers if possible
+                    //        - 25348.1001: PC (Dev)
+                    //        - 25348.1001: PC (Dev, Beta)
+                    //        - 25348.1001: PC (Dev, Beta, ...)
+                    //        - 20349.1787: PC 21H2 (LTSC), Azure 22H2 (Production)
+                    //     - alternatively
+                    //        - PC 25348.1001 (Dev)
+                    //        - PC 25348.1001 (Dev & Beta) - if version numbers are equal
+                    //        - PC 25348.1001 (Dev), 22123.1001 (Beta) - if not
+                    //        - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
+                    //        - 25348.1001: PC (Dev), ISO (Stable)
+                    //     - when many:
+                    //        - PC: 10 new builds in 7 channels
+                    //          Server: 20348.2031 (LTSC 21H2), 17763.4974 (LTSC) & 14393.6351 (LTSC)
+                    //  - order multiple changes by:
+                    //     - user set priority
+                    //     - build number highest to lowest
+                    
+                    //this->append (L"\x272E %hs (%hs) \t%hs %u.%u", info.platform, info.channel, info.name, info.build, info.release);
+
+                    StringBuilder content (nid.szInfo);
+
+                    switch (this->nplatforms) {
+                        case 1:
+                            // TODO: do not repeat platform
+                            break;
+                        case 2:
+                        case 3:
+                            // TODO: compute channels or builds
+                            // TODO: count different channels
+
+                            break;
+                        case 4:
+                            // TODO: per-platform
+                            break;
+                        default:
+                            // TODO: show "& X more..." on the last row
+                            break;
+                    }
+
+                    title.finish ();
+                    content.finish ();
 
                     nid.uTimeout = 60'000;
-                } else {
-                    // set signalling icon, play sound and set nid.szTip?
                 }
-
+                
                 Shell_NotifyIcon (NIM_MODIFY, &nid);
                 nid.uFlags &= ~NIF_INFO;
             }
-
-            /*
-                // 8.1 celý tip
-                // 1507 cca 164 chars
-                // 1607 cca 176 chars v balonu a 215 v seznamu
-                // 2021 cca 205 chars v balonu a 215 v seznamu
-                // Win 11 cca 219 chars v balonu a 200 v seznamu
-
-                // // místo "New" symbol \xE113 (star) or \xE115 (sprocket) or \E154 (windows)
-                std::wcsncpy (nid.szInfo, L"\x272E \xE113 \xEA8A \xE115 \xE154 \x2665 \x2661 \x2026 \x2116" // 17 chars
-                              " 9 0 20 x3 4 5 6 7 8 9 0 302 3 4 5 6 7 8 9 0 402 3 4 5 6 7 8 9 0 502 3 4 5 6 7 8 9 0 602 3 4 5 6 7 8 9a 0 702 3 4 5 6 7 8b 9 0" // 126 chars
-                              " 802 3 4 5 6 7c 8 9 0 902 3 4 5 6d 7 8 9 0 100 3 4 5e 6 7 8 9 0 110 3 4f 5 6. 7 8 9 0 1 2 3g 4 5 6 7 8 9 0 1 2h..",
-                              256);
-                std::wcsncpy (nid.szInfoTitle, L"\x272E \xE113 \xEA8A \xE115 \xE154 \x2665 \x2661 \x2026 \x2116 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 X.", 64);
-            */
-
-            // and reset
-
-            std::memset (this, 0, sizeof *this);
-            return true;
         }
-    } report;
+    } * report = NULL;
+
+    static const auto xfjhdslkfjs = sizeof (Report);
 
     std::uint32_t timestamp_to_date (const char * timestamp) {
         char date [9] = {};
@@ -1529,7 +1714,7 @@ namespace {
             return 0;
     }
 
-    bool UpdateBuild (const wchar_t * key, const BuildInfo & info, bool report) {
+    bool UpdateBuild (const wchar_t * key, const BuildInfo & info, bool do_report) {
         Update updated = Update::None;
 
         // read stored value
@@ -1558,9 +1743,8 @@ namespace {
 
         if (updated != Update::None) {
             RegSetValueEx (builds, key, NULL, REG_BINARY, reinterpret_cast <BYTE *> (&data), sizeof data);
-            // Print (L"UPDATE(%d) %s %u.%u\n", (int) updated, key, info.build, info.release);
 
-            if (!installed && report) {
+            if (!installed && do_report) {
 
                 // compare with alerts
 
@@ -1572,7 +1756,13 @@ namespace {
                     cchAlert = (DWORD) array_size (alert);
 
                     if (Windows::MatchFilename (key, alert)) {
-                        ::report.insert (updated, info);
+
+                        if (report == nullptr)
+                            report = (Report *) HeapAlloc (heap, HEAP_ZERO_MEMORY, sizeof (Report));
+
+                        if (report)
+                            report->insert (updated, info);
+
                         return true;
                     }
                 }
@@ -1835,21 +2025,26 @@ namespace {
             installed = false;
 
             ScheduleCheck ();
+
             if (failure) {
                 animation.set (Failure);
             } else {
                 animation.set (Idle);
             }
-            TrimMemoryUsage ();
-            report.toast ();
 
-            if (!failure) {
-                EnableMenuItem (menu, 0x1D, MF_ENABLED);
+            if (report) {
+                report->toast ();
+
+                HeapFree (heap, 0, report);
+                report = nullptr;
             }
 
-            if (retry) {
-                retry = false;
-                CheckChanges ();
+            TrimMemoryUsage ();
+
+            if (failure) {
+                SetTimer (window, 3, GetSettingsValue (L"retry", 10000), NULL);
+            } else {
+                EnableMenuItem (menu, 0x1D, MF_ENABLED);
             }
         }
     }
@@ -1861,9 +2056,13 @@ namespace {
         if (VirtualFree (json_allocator, json_commit, MEM_DECOMMIT)) {
             json_commit = 0;
         }
+#ifndef _M_ARM64
         if (IsWindows8Point1OrGreater ()) {
+#endif
             HeapSetInformation (NULL, HeapOptimizeResources, NULL, 0);
+#ifndef _M_ARM64
         }
+#endif
         SetProcessWorkingSetSize (GetCurrentProcess (), (SIZE_T) -1, (SIZE_T) -1);
     }
 }

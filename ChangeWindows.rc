@@ -41,6 +41,8 @@ LANGUAGE LANG_ENGLISH, SUBLANG_DEFAULT
     0x22 "Checking on new releases…" // \xE117
     0x23 "New build(s) and/or release(s) available!\nDouble click for details…"
 
+    0x2A " more"
+
     0x30 L" \x2013 Configuration"
     0x31 "Platform"
     0x32 "Channel/Release"

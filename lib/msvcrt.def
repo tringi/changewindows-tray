@@ -10,6 +10,7 @@ EXPORTS
 	strstr
 	strchr
 	strcmp
+	strlen
 	wcslen
 	wcscmp
 	wcscpy
