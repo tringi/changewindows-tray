@@ -158,7 +158,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
       <HeapCommitSize>65536</HeapCommitSize>
@@ -185,7 +185,8 @@
       <ExceptionHandling>false</ExceptionHandling>
       <StringPooling>true</StringPooling>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BasicRuntimeChecks>
+      </BasicRuntimeChecks>
       <ControlFlowGuard>false</ControlFlowGuard>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -209,7 +210,7 @@
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>.rdata=.text</MergeSections>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
@@ -251,7 +252,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
       <HeapCommitSize>65536</HeapCommitSize>
@@ -291,7 +292,7 @@
       <TerminalServerAware>true</TerminalServerAware>
       <SwapRunFromCD>true</SwapRunFromCD>
       <SwapRunFromNET>true</SwapRunFromNET>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
       <HeapCommitSize>65536</HeapCommitSize>
@@ -318,7 +319,8 @@
       <ExceptionHandling>false</ExceptionHandling>
       <StringPooling>true</StringPooling>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BasicRuntimeChecks>
+      </BasicRuntimeChecks>
       <ControlFlowGuard>false</ControlFlowGuard>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -343,7 +345,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
@@ -373,7 +375,8 @@
       <ExceptionHandling>false</ExceptionHandling>
       <StringPooling>true</StringPooling>
       <BufferSecurityCheck>false</BufferSecurityCheck>
-      <BasicRuntimeChecks>Default</BasicRuntimeChecks>
+      <BasicRuntimeChecks>
+      </BasicRuntimeChecks>
       <ControlFlowGuard>false</ControlFlowGuard>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -400,7 +403,7 @@
       <SwapRunFromNET>true</SwapRunFromNET>
       <MergeSections>
       </MergeSections>
-      <AdditionalDependencies>winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>ntdll.lib;winhttp.lib;wininet.lib;comctl32.lib;uxtheme.lib;$(CoreLibraryDependencies);lib\msvcrt.lib;chkstk.obj;libcmt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <ImageHasSafeExceptionHandlers>false</ImageHasSafeExceptionHandlers>
       <EntryPointSymbol>Main</EntryPointSymbol>
       <HeapReserveSize>262144</HeapReserveSize>
