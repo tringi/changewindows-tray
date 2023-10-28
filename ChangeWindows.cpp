@@ -1729,12 +1729,12 @@ namespace {
                     // CONTENT
                     //  - we have 4 rows available
 
-                    enum Mode {
-                        PlatformReleaseMode,    // Platform: Release (Channel), Release (Channel, ...): 12345.10001
-                        ReleaseMode,            //           Release (Channel), Release (Channel, ...): 12345.10001
-                        CombinedMode,
-                        BuildsMode,             // 12345.10001: Platform Release (Channel), Release (Channel, ...), Platform (...)
-                    } mode = PlatformReleaseMode;
+                    enum ToastMode {
+                        PlatformToastMode,    // Platform: Release (Channel), Release (Channel, ...): 12345.10001
+                        ChannelToastMode,     //           Release (Channel), Release (Channel, ...): 12345.10001
+                        ReleaseToastMode,     // Platform Release (Channel)
+                        BuildsToastMode,      // 12345.10001: Platform Release (Channel), Release (Channel, ...), Platform (...)
+                    } mode = PlatformToastMode;
 
                     auto nreleases = 0u;
                     for (auto ip = 0u; ip != this->nplatforms; ++ip) {
@@ -1744,34 +1744,36 @@ namespace {
                     auto ellipsis = 0u;
                     switch (this->nplatforms) {
                         case 1:
-                            mode = ReleaseMode;
-                            break;
                         case 2:
                         case 3:
                             /*if (nreleases <= 4) {
-                                mode = CombinedMode;
+                                mode = ReleaseToastMode; // each release on separate trow
                             } else*/ {
-                                mode = PlatformReleaseMode;
+                                if (this->nplatforms == 1) {
+                                    mode = ChannelToastMode;
+                                } else {
+                                    mode = PlatformToastMode;
+                                }
                             }
                             break;
                         case 4:
-                            mode = PlatformReleaseMode;
+                            mode = PlatformToastMode;
                             break;
 
                         default:
                             if (this->extrabuilds == 0) { // more than 4 platforms, only 4 or less builds, use per-build display
-                                mode = BuildsMode;
+                                mode = BuildsToastMode;
                             } else {
-                                mode = PlatformReleaseMode;
+                                mode = PlatformToastMode;
                                 ellipsis = this->nplatforms - 4; // show "& X more..." 
                             }
                             break;
                     }
 
                     if (builds_report) {
-                        mode = BuildsMode;
+                        mode = BuildsToastMode;
                     }
-                    if (mode == BuildsMode) {
+                    if (mode == BuildsToastMode) {
                         ellipsis = this->extrabuilds;
                     }
 
@@ -1785,14 +1787,20 @@ namespace {
                     StringBuilder content (nid.szInfo, limit);
 
                     switch (mode) {
-                        case ReleaseMode:
-                        case PlatformReleaseMode:
+                        case ChannelToastMode:
+                        case PlatformToastMode:
 
                             // (0) PC 22H2 (GAC, Preview, LTSC) 19044.3570, 1607 (LTSB) 14393.6543
                             // (1) PC 22H2 (3) 19044.3570, 1607 (1) 14393.6543
                             // (2) PC 22H2 19044.3570, 1607 14393.6543
                             // (3) PC 19044.3570, 14393.6543
                             // (4) PC: 2 new builds in 4 channels
+
+                            // TODO: consider
+                            //  - PC 25348.1001 (Dev 23H2 & Beta 22H2) - if versions are the same
+                            //  - PC 25348.1001 (Dev 23H2), 22123.1001 (Beta 22H2)
+                            //  - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
+                            //  - Server 20348.2031 (LTSC 21H2), 17763.4974 (LTSC) & 14393.6351 (LTSC)
 
                             for (auto level = 0u; level != 5u; ++level) {
                                 content.reset ();
@@ -1814,7 +1822,7 @@ namespace {
                                     }
 
                                     if (level == 4) {
-                                        if (mode != ReleaseMode) {
+                                        if (mode == PlatformToastMode) {
                                             content.append (platform.name);
                                             content.append (L':');
                                             content.append (L' ');
@@ -1826,7 +1834,7 @@ namespace {
                                         content.append_rsrc (0x2C);
 
                                     } else {
-                                        if (mode != ReleaseMode) {
+                                        if (mode == PlatformToastMode) {
                                             content.append (platform.name);
                                             content.append (L' ');
                                         }
@@ -1891,18 +1899,11 @@ namespace {
                             }
                             break;
 
-                        case CombinedMode:
-                            // TODO: combined mode
-                            // TODO: fix naming of these things
-                            //  - if sum of platform:builds is 4 or lesss
-                            //  - Server 20348.2031 (LTSC 21H2), 17763.4974 (LTSC) & 14393.6351 (LTSC)
-                            //  - PC 25348.1001 (Dev & Beta) - if version numbers are equal
-                            //  - PC 25348.1001 (Dev), 22123.1001 (Beta) - if not
-                            //  - PC 25348.1001 (Dev, Beta, ...) - if more than would fit
+                        case ReleaseToastMode: // TODO: if sum of platform:builds is 4 or less
 
                             break;
 
-                        case BuildsMode:
+                        case BuildsToastMode:
 
                             // (0) 20349.1787: PC 21H2 (Canary), PC 22H2 (Dev), Azure 22H2 (Production), 23H2 (Unstable)
                             // (1) 20349.1787: PC (Canary), PC (Dev), Azure (Production), Azure (Unstable)
