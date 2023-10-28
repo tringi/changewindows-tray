@@ -50,18 +50,12 @@ When you run `ChangeWindows.exe param` the following happens depending on `param
 
 ## Toast notifications
 
-TBD: description, mode selection
+Text length in Toast (Balloon on Windows 8.1 and earlier) notifications is quite limited
+which makes it difficult to fit in all the possible changes, e.g. on Second Tuesday updates.
+The applications attempts to combine the news in various ways,
+but the notification may look different each time.
 
-### Single platform
-
-### Platforms
-
-### Releases
-
-Not implemented yet.
-
-### Builds
-
+* See [README-toast.md](README-toast.md) for details
 
 ## Libraries used:
 * https://github.com/vivkin/gason
