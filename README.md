@@ -26,6 +26,16 @@ Options:
 * **Check for legacy platforms** - do not ignore platforms marked as *legacy*, e.g.: Mobile, IoT and 10X
 * **Group toast by build numbers** - use *Build* notification format if possible (see below)
 
+## Command-line parameters
+
+When you run `ChangeWindows.exe param` the following happens depending on `param`:
+
+* `hide` – starts the program without tray icon, or hides the existing one
+* `show` – restores hidden tray icon of the running program (if any is running)
+* `check` – instructs the running program to check for any updates
+* `settings` – instructs the running instance to open Settings dialog
+* `terminate` – closes the running instance
+
 ## Manual configuration
 
 `HKEY_CURRENT_USER\SOFTWARE\TRIM CORE SOFTWARE s.r.o.\ChangeWindows\alerts`
