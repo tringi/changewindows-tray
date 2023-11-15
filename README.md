@@ -5,7 +5,7 @@ Designed for smallest possible footprint. By [TRIM CORE SOFTWARE](https://www.tr
 
 ## Installation
 
-Download appropriate executable from the [builds directory](tree/main/builds),
+Download appropriate executable from the [builds directory](builds),
 copy it into your *Program Files*, and make a link in Startup to have it started automatically.
 
 After the initial sync, a Settings dialog will be available to configure reporting.
@@ -30,11 +30,11 @@ Options:
 
 When you run `ChangeWindows.exe param` the following happens depending on `param`:
 
-* `hide` – starts the program without tray icon, or hides the existing one
-* `show` – restores hidden tray icon of the running program (if any is running)
-* `check` – instructs the running program to check for any updates
-* `settings` – instructs the running instance to open Settings dialog
-* `terminate` – closes the running instance
+* `hide` â€“ starts the program without tray icon, or hides the existing one
+* `show` â€“ restores hidden tray icon of the running program (if any is running)
+* `check` â€“ instructs the running program to check for any updates
+* `settings` â€“ instructs the running instance to open Settings dialog
+* `terminate` â€“ closes the running instance
 
 ## Manual configuration
 
