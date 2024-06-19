@@ -54,7 +54,7 @@ namespace {
     static constexpr auto MAX_CHANNEL_LENGTH = 22u;
     static constexpr auto MAX_RELEASE_LENGTH = 22u;
 
-    enum Mode {
+    enum Mode : std::uint8_t {
         Idle = 0,
         Failure,
         Checking,
@@ -717,8 +717,8 @@ namespace {
                         UpdateTrayIcon ();
                         break;
                     case 3:
-                        CheckChanges ();
                         KillTimer (hWnd, wParam);
+                        CheckChanges ();
                         break;
 
                 }
@@ -740,6 +740,11 @@ namespace {
                     case NIN_BALLOONUSERCLICK:
                         animation.set (Idle);
                         OpenWebsite (hWnd, 0x0A);
+                        break;
+
+                    case WM_LBUTTONUP:
+                    case WM_LBUTTONDOWN:
+                        animation.set (Idle);
                         break;
 
                     case WM_LBUTTONDBLCLK:
@@ -1292,6 +1297,7 @@ namespace {
                                         SetDlgItemText (hwnd, 201 + c, text);
                                     }
                                     EnableWindow (nm->hwndFrom, FALSE);
+                                    remembered.fill_channels (GetDlgItem (hwnd, 202), GetDlgItem (hwnd, 201));
                                     UpdateButtons (hwnd);
                                     break;
                             }
